@@ -6,14 +6,14 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 
-# 1. Настройка логов
-logging.basicConfig(level=logging.INFO)
+# 1. Настройка логирования
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# 2. Ключи (берутся из настроек Environment на Render)
+# 2. Ключи (берутся из Environment Variables на Render)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# 3. Настройка ИИ (Модель Qwen 2.5 - мощная и стабильная)
+# 3. Настройка ИИ (Модель Qwen 2.5 - самая стабильная)
 client = InferenceClient("Qwen/Qwen2.5-72B-Instruct", token=HF_TOKEN)
 
 # --- Веб-сервер для Render (порт 10000) ---
@@ -52,11 +52,11 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=500
         )
-        answer = response.choices.message.content
+        # Правильный способ достать текст ответа в новой версии библиотеки:
+        answer = response.choices[0].message.content
         await update.message.reply_text(answer)
     except Exception as e:
         logging.error(f"Ошибка ИИ: {e}")
-        # Если ИИ не отвечает, бот скажет об этом
         await update.message.reply_text("Я немного задумался, напиши чуть позже!")
 
 # --- Запуск ---
