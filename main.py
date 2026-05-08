@@ -6,25 +6,37 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 
-# Настройка логирования
+# 1. Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Ключи из настроек Environment на Render
+# 2. Ключи (берутся из Environment Variables на Render)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# ИИ модель (Qwen 2.5)
+# 3. Настройка ИИ
 client = InferenceClient("Qwen/Qwen2.5-72B-Instruct", token=HF_TOKEN)
 
-# Веб-сервер для Render (порт 10000)
+# --- ИСПРАВЛЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT ---
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        # Добавляем этот метод, чтобы UptimeRobot видел статус "Зеленый"
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
 
 def run_health():
+    # На Render порт 10000 обязателен для Free тарифа
     server = HTTPServer(('0.0.0.0', 10000), Health)
+    print("Веб-сервер мониторинга запущен")
     server.serve_forever()
 
+# --- Твой текст приветствия (БЕЗ ИЗМЕНЕНИЙ) ---
 START_TEXT = """Привет я YOKO! С помощью меня сможешь узнать как установить YOKO на телефон. 
 Пока что это работает в виде сайта, чтобы можно было зайти и на Android, и на iPhone. 
 
@@ -34,6 +46,7 @@ START_TEXT = """Привет я YOKO! С помощью меня сможешь 
 3. Выбери "Добавить на главный экран" 
 Теперь сайт будет как приложение)"""
 
+# --- Функции бота ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_TEXT)
 
@@ -49,14 +62,15 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=500
         )
-        # ИСПРАВЛЕННЫЙ ПУТЬ К ОТВЕТУ:
-        answer = response.choices[0].message.content
+        answer = response.choices.message.content
         await update.message.reply_text(answer)
     except Exception as e:
         logging.error(f"Ошибка ИИ: {e}")
         await update.message.reply_text("Я немного задумался, напиши чуть позже!")
 
+# --- Запуск ---
 if __name__ == '__main__':
+    # Запускаем веб-сервер для "будильника"
     threading.Thread(target=run_health, daemon=True).start()
     
     if TELEGRAM_TOKEN:
@@ -65,3 +79,5 @@ if __name__ == '__main__':
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
         print("БОТ YOKO ЗАПУЩЕН")
         app.run_polling(drop_pending_updates=True)
+    else:
+        print("ОШИБКА: TELEGRAM_TOKEN не найден!")
