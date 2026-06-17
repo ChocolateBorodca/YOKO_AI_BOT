@@ -14,7 +14,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # 3. Настройка ИИ
-client = InferenceClient("Qwen/Qwen2.5-72B-Instruct", token=HF_TOKEN)
+client = InferenceClient("meta-llama/Meta-Llama-3-8B-Instruct", token=HF_TOKEN)
 
 # --- ИСПРАВЛЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT ---
 class Health(BaseHTTPRequestHandler):
