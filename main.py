@@ -12,11 +12,8 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Безопасно получаем ID админа из настроек Render (если не задан, то 0)
-try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-except:
-    ADMIN_ID = 0
+try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except: ADMIN_ID = 0
 
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
@@ -29,10 +26,7 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    # Безопасная проверка: создатель всегда имеет вечный Премиум
-    if ADMIN_ID != 0 and user_id == ADMIN_ID:
-        return 1, "mellstroy"
-        
+    if ADMIN_ID != 0 and user_id == ADMIN_ID: return 1, "mellstroy"
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
@@ -83,7 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Вот список всех доступных команд, нажми на любую:\n"
         "/yoko — Переключить на обычный вежливый ИИ (Бесплатно)\n"
         "/buy — Открыть платный режим МЕЛЛСТРОЯ за 1 звезду\n"
-        "/mellstroy — Включить режим Меллстроя обратно (Если куплен)\n"
+        "/mellstroy — Включить режим Меллстроя обратно\n"
         "/profile — Посмотреть свой ID и статус подписки"
     )
     await update.message.reply_text(start_info)
@@ -130,16 +124,24 @@ async def handle_ai_logic(user_text, current_mode):
     prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     try:
         response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
+        
+        # --- СВЕРХБЕЗОПАСНАЯ РАСПАКОВКА ЛЮБОГО ФОРМАТА ОТВЕТА ---
         answer = ""
         if isinstance(response, list) and len(response) > 0:
-            item = response
+            item = response[0]
             if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
         elif isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
-            elif 'message' in response: answer = response['message'].get('content', '')
+            if 'choices' in response and len(response['choices']) > 0:
+                answer = response['choices'][0]['message'].get('content', '')
+            elif 'message' in response:
+                answer = response['message'].get('content', '')
+        
         if not answer:
-            try: answer = response.choices.message.content
-            except: answer = str(response)
+            try: answer = response.choices[0].message.content
+            except:
+                try: answer = response.choices.message.content
+                except: answer = str(response)
+
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
         return answer
     except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
