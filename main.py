@@ -2,73 +2,50 @@ import os
 import threading
 import logging
 import sqlite3
-import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
+from utils import translate_to_burmalda, transcribe_audio
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
-
 DB_FILE = "yoko_database.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0, mode TEXT DEFAULT "default")')
     conn.commit()
     conn.close()
 
-def get_user_premium(user_id):
+def get_user_data(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT is_premium FROM users WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     if not row:
-        cursor.execute('INSERT INTO users (user_id, is_premium) VALUES (?, 0)', (user_id,))
+        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (user_id,))
         conn.commit()
-        return 0
+        return 0, "default"
     conn.close()
     return row
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO users (user_id, is_premium) VALUES (?, 1) ON CONFLICT(user_id) DO UPDATE SET is_premium=1', (user_id,))
+    cursor.execute('UPDATE users SET is_premium = 1, mode = "mellstroy" WHERE user_id = ?', (user_id,))
     conn.commit()
     conn.close()
 
-# Перевод на Бурмалду
-def translate_to_burmalda(text):
-    text = re.sub(r'\bя\b', 'ч', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bдед\b', 'дод', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bдеда\b', 'дода', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bжена\b', 'жинка', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bжены\b', 'жинки', text, flags=re.IGNORECASE)
-    
-    words = text.split()
-    burmalda_words = []
-    
-    for word in words:
-        clean_word = re.sub(r'[^\w\s]', '', word)
-        if len(clean_word) > 2 and not clean_word.lower() in ['как', 'что', 'или', 'под', 'для', 'без', 'все']:
-            if word.endswith(('.', ',', '!', '?')):
-                mark = word[-1]
-                w = word[:-1]
-                w = w + 'сть' if w.endswith(('а', 'я', 'ь', 'о', 'е')) else w + 'ость'
-                burmalda_words.append(w + mark)
-            else:
-                w = word + 'сть' if word.endswith(('а', 'я', 'ь', 'о', 'е')) else word + 'ость'
-                burmalda_words.append(w)
-        else:
-            burmalda_words.append(word)
-            
-    return " ".join(burmalda_words)
+def set_user_mode(user_id, mode):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET mode = ? WHERE user_id = ?', (mode, user_id))
+    conn.commit()
+    conn.close()
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -79,111 +56,121 @@ class Health(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
-def run_health():
-    server = HTTPServer(('0.0.0.0', 10000), Health)
-    server.serve_forever()
-
-START_TEXT = "Привет я YOKO! Используй /buy чтобы открыть секретный режим!"
-DEFAULT_PROMPT = "Ты дружелюбный ИИ-помощник. Отвечай кратко на русском языке."
-MELLSTROY_PROMPT = "Ты — скандальный стример Меллстрой. Твой стиль: хайповый, дерзкий, угарный. Постоянно используй слова: боров, легенда, бубс, осуждаю, крутим слоты. Обращайся к пользователю 'братишка' или 'боров'. Отвечай кратко."
-
 async def set_default_commands(application):
     commands = [
         BotCommand("start", "Запустить бота"),
-        BotCommand("buy", "⚡ Открыть режим МЕЛЛСТРОЯ (1 звезда)"),
-        BotCommand("mellstroy", "🎰 Меню Меллстроя (Только для Премиум)")
+        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
+        BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
+        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (1 звезда)"),
+        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
     ]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(START_TEXT)
+    await update.message.reply_text("Привет я YOKO! Используй меню команд слева для суеты!")
+
+async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    set_user_mode(user_id, "default")
+    await update.message.reply_text("😇 Теперь с тобой общается обычный ИИ YOKO.")
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         prices = [LabeledPrice("Бурмалда Premium", 1)]
         await context.bot.send_invoice(
-            chat_id=update.message.chat_id,
-            title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
-            description="Открывает Premium режим! Меллстрой начнет суетить в чате строго на языке Бурмалда.",
-            payload="yoko_premium_payload", provider_token="", currency="XTR", prices=prices
+            chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
+            description="Открывает Premium режим!", payload="yoko_premium_payload",
+            provider_token="", currency="XTR", prices=prices
         )
-    except Exception as e:
-        logging.error(f"Ошибка счета: {e}")
+    except Exception as e: logging.error(f"Ошибка счета: {e}")
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    set_user_premium(user_id)
-    await update.message.reply_text("🎰 ЕС ТУ ДЕЙ! Премиумность активирована! Ч в здании, пиши мне, боровость! Теперь команда /mellstroy разблокирована! 🔥")
+    set_user_premium(update.message.from_user.id)
+    await update.message.reply_text("🎰 Премиумность активирована! Режим Меллстроя-Бурмалды включен! 🔥")
 
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    if not get_user_premium(user_id):
-        await update.message.reply_text("❌ Сначала активируй режим Меллстроя через /buy 🎰")
+    is_premium, _ = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ Сначала нужно открыть этот режим через /buy 🎰")
         return
-    await update.message.reply_text("🔥 ДОБРО ПОЖАЛОВАТЬ В БУРМАЛДУ, ЛЕГЕНДА! Ч теперь общаюсь с тобой только так. Задавай мне любой вопросирость! 🎰")
+    set_user_mode(user_id, "mellstroy")
+    await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Ч снова общаюсь на языке Бурмалда. 🎰")
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, current_mode = get_user_data(user_id)
+    status_str = "Активирован (Premium)" if is_premium else "Не активирован"
+    mode_str = "Меллстрой на Бурмалде" if current_mode == "mellstroy" else "Обычный YOKO"
+    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Режим: {mode_str}")
+
+async def handle_ai_logic(user_text, current_mode):
+    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
+    try:
+        response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
+        answer = ""
+        if isinstance(response, list) and len(response) > 0:
+            item = response[0]
+            if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
+        elif isinstance(response, dict):
+            if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message'].get('content', '')
+            elif 'message' in response: answer = response['message'].get('content', '')
+        if not answer:
+            try: answer = response.choices[0].message.content
+            except: answer = str(response)
+        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
+        return answer
+    except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
-    is_premium = get_user_premium(user_id)
-    
-    system_prompt = MELLSTROY_PROMPT if is_premium else DEFAULT_PROMPT
-    
-    try:
-        response = client.chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            max_tokens=200
-        )
-        
-        # --- СВЕРХБЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ---
-        answer = ""
-        if isinstance(response, list) and len(response) > 0:
-            item = response[0]
-            if isinstance(item, dict) and 'message' in item:
-                answer = item['message'].get('content', '')
-        elif isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices'][0]['message'].get('content', '')
-            elif 'message' in response:
-                answer = response['message'].get('content', '')
-        
-        if not answer:
-            try:
-                answer = response.choices[0].message.content
-            except:
-                answer = str(response)
+    if update.message.chat.type in ['group', 'supergroup']:
+        is_premium, current_mode = get_user_data(user_id)
+        if not is_premium:
+            await update.message.reply_text("❌ Только для Премиум пользователей.")
+            await context.bot.leave_chat(update.message.chat_id)
+            return
+        await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
+        return
+    is_premium, current_mode = get_user_data(user_id)
+    await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
 
-        # Перевод в Бурмалду для Премиум пользователей
-        if is_premium:
-            answer = translate_to_burmalda(answer)
-            
-        await update.message.reply_text(answer)
-    except Exception as e:
-        await update.message.reply_text(f"🔴 Ошибка ИИ: {str(e)[:50]}")
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, current_mode = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ ГС доступно только Premium пользователям.")
+        return
+    await update.message.reply_text("🎙️ Расшифровываю голосовое...")
+    file = await context.bot.get_file(update.message.voice.file_id)
+    audio = await file.download_as_bytearray()
+    text = transcribe_audio(bytes(audio), HF_TOKEN)
+    if not text:
+        await update.message.reply_text("❌ Не удалось разобрать слова.")
+        return
+    answer = await handle_ai_logic(text, current_mode)
+    await update.message.reply_text(f"💬 Вы: {text}\n\n🤖 Ответ: {answer}")
 
 if __name__ == '__main__':
     init_db()
-    threading.Thread(target=run_health, daemon=True).start()
+    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         import asyncio
         try: loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
         loop.run_until_complete(set_default_commands(app))
-        
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("yoko", cmd_yoko))
         app.add_handler(CommandHandler("buy", buy_premium))
         app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
+        app.add_handler(CommandHandler("profile", cmd_profile))
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-        print("БОТ YOKO ЗАПУЩЕН")
+        app.add_handler(MessageHandler(filters.VOICE, handle_voice))
         app.run_polling(drop_pending_updates=True)
