@@ -36,8 +36,8 @@ def run_health():
     print("Веб-сервер мониторинга запущен")
     server.serve_forever()
 
-# --- Твой текст приветствия (БЕЗ ИЗМЕНЕНИЙ) ---
-START_TEXT = """Привет я YOKO! Я ИИ бот бурмалда
+# --- Твой текст приветствия (КАВЫЧКИ ИСПРАВЛЕНЫ) ---
+START_TEXT = """Привет я YOKO! Я ИИ бот бурмалда"""
 
 # --- Функции бота ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,11 +55,17 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=500
         )
-        # --- ИСПРАВЛЕННОЕ ЧТЕНИЕ ОТВЕТА ---
-        if isinstance(response, list):
+        
+        # --- УНИВЕРСАЛЬНОЕ И БЕЗОПАСНОЕ ЧТЕНИЕ ОТВЕТА ---
+        if isinstance(response, dict):
+            answer = response['choices'][0]['message']['content']
+        elif isinstance(response, list):
             answer = response[0]['message']['content']
         else:
-            answer = response.choices[0].message.content
+            try:
+                answer = response.choices[0].message.content
+            except:
+                answer = response['message']['content']
             
         await update.message.reply_text(answer)
     except Exception as e:
