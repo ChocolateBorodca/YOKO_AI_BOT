@@ -32,7 +32,6 @@ def get_user_data(user_id):
     row = cursor.fetchone()
     conn.close()
     
-    # Если зашел создатель, жестко ставим Премиум, но сохраняем выбранный им текущий режим (default или mellstroy)
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row:
             return 1, "mellstroy"
@@ -45,7 +44,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return row
+    return row[0], row[1]
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -75,7 +74,7 @@ async def set_default_commands(application):
         BotCommand("start", "Запустить бота и увидеть команды"),
         BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
-        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (1 звезда)"),
+        BotCommand("buy", "⚡ Купить regime МЕЛЛСТРОЯ (1 звезда)"),
         BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
     ]
     await application.bot.set_my_commands(commands)
@@ -130,27 +129,28 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
 async def handle_ai_logic(user_text, current_mode):
-    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
+    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, legenda, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     try:
         response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
         
+        # --- НЕУБИВАЕМАЯ РАСПАКОВКА ОТВЕТА ЛЮБОГО ТИПА ---
         answer = ""
-        if isinstance(response, list) and len(response) > 0:
-            item = response
-            if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
-        elif isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices']['message'].get('content', '')
-            elif 'message' in response:
-                answer = response['message'].get('content', '')
-        
-        if not answer:
-            try: answer = response.choices.message.content
-            except:
-                try: answer = response.choices.message.content
-                except: answer = str(response)
+        try:
+            answer = response.choices[0].message.content
+        except:
+            if isinstance(response, list) and len(response) > 0:
+                item = response[0]
+                if isinstance(item, dict) and 'message' in item:
+                    answer = item['message'].get('content', '')
+            elif isinstance(response, dict):
+                if 'choices' in response and len(response['choices']) > 0:
+                    answer = response['choices'][0]['message'].get('content', '')
+                elif 'message' in response:
+                    answer = response['message'].get('content', '')
 
-        # ИСПРАВЛЕНО: Перевод в Бурмалду включается СТРОГО если выбран режим mellstroy
+        if not answer:
+            answer = str(response)
+
         if current_mode == "mellstroy": 
             answer = translate_to_burmalda(answer)
         return answer
