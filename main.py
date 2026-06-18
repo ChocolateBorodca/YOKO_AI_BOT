@@ -43,24 +43,20 @@ def set_user_premium(user_id):
     conn.commit()
     conn.close()
 
-# --- КОРРЕКТНЫЙ ПЕРЕВОД НА БУРМАЛДУ НА PYTHON ---
+# Перевод на Бурмалду
 def translate_to_burmalda(text):
-    # 1. Специфические замены слов (регистронезависимо)
     text = re.sub(r'\bя\b', 'ч', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдед\b', 'дод', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдеда\b', 'дода', text, flags=re.IGNORECASE)
     text = re.sub(r'\bжена\b', 'жинка', text, flags=re.IGNORECASE)
     text = re.sub(r'\bжены\b', 'жинки', text, flags=re.IGNORECASE)
     
-    # 2. Правило суффиксов для слов длиннее 2 символов
     words = text.split()
     burmalda_words = []
     
     for word in words:
-        clean_word = re.sub(r'[^\w\s]', '', word) # убираем знаки препинания для анализа
-        # Если слово похоже на существительное или обычное слово и оно длинное
+        clean_word = re.sub(r'[^\w\s]', '', word)
         if len(clean_word) > 2 and not clean_word.lower() in ['как', 'что', 'или', 'под', 'для', 'без', 'все']:
-            # Проверяем окончание, чтобы красиво насадить суффикс
             if word.endswith(('.', ',', '!', '?')):
                 mark = word[-1]
                 w = word[:-1]
@@ -144,14 +140,26 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=200
         )
-        if isinstance(response, dict):
-            answer = response['choices']['message']['content']
-        elif isinstance(response, list):
-            answer = response['message']['content']
-        else:
-            answer = response.choices.message.content
-            
-        # Если активирован Премиум — мгновенно прогоняем через правила Бурмалды
+        
+        # --- СВЕРХБЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ ТЕКСТА ---
+        answer = ""
+        if isinstance(response, list) and len(response) > 0:
+            item = response[0]
+            if isinstance(item, dict) and 'message' in item:
+                answer = item['message'].get('content', '')
+        elif isinstance(response, dict):
+            if 'choices' in response and len(response['choices']) > 0:
+                answer = response['choices'][0]['message'].get('content', '')
+            elif 'message' in response:
+                answer = response['message'].get('content', '')
+        
+        if not answer:
+            try:
+                answer = response.choices[0].message.content
+            except:
+                answer = str(response)
+
+        # Перевод в Бурмалду для Премиум пользователей
         if is_premium:
             answer = translate_to_burmalda(answer)
             
