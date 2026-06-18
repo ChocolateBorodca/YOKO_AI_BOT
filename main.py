@@ -11,11 +11,15 @@ from utils import translate_to_burmalda, transcribe_audio
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
+
+# Безопасно получаем ID админа из настроек Render (если не задан, то 0)
+try:
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except:
+    ADMIN_ID = 0
+
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
-
-# СЮДА ВПИШИ СВОЙ ID ИЗ ТЕЛЕГРАМА, ЧТОБЫ ПРЕМИУМ НИКОГДА НЕ СЛЕТАЛ
-YOUR_TELEGRAM_ID = 8678792050  # Замени эти цифры на свой ID, если он другой
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -25,8 +29,9 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    if user_id == YOUR_TELEGRAM_ID:
-        return 1, "mellstroy"  # Создатель всегда имеет вечный Премиум и режим Меллстроя
+    # Безопасная проверка: создатель всегда имеет вечный Премиум
+    if ADMIN_ID != 0 and user_id == ADMIN_ID:
+        return 1, "mellstroy"
         
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -73,7 +78,6 @@ async def set_default_commands(application):
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Теперь при старте бот четко пишет, какие команды нажимать
     start_info = (
         "Привет я YOKO! Я ИИ бот бурмалда.\n\n"
         "Вот список всех доступных команд, нажми на любую:\n"
