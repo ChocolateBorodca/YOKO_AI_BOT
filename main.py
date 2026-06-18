@@ -62,7 +62,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             max_tokens=500
         )
-        answer = response.choices.message.content
+        # --- ИСПРАВЛЕННОЕ ЧТЕНИЕ ОТВЕТА ---
+        if isinstance(response, list):
+            answer = response[0]['message']['content']
+        else:
+            answer = response.choices[0].message.content
+            
         await update.message.reply_text(answer)
     except Exception as e:
         logging.error(f"Ошибка ИИ: {e}")
