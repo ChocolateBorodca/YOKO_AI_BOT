@@ -73,6 +73,12 @@ if __name__ == '__main__':
     # Запускаем веб-сервер для "будильника"
     threading.Thread(target=run_health, daemon=True).start()
     
+    # БЕЗОПАСНАЯ ПРОВЕРКА ТОКЕНА В ЛОГАХ
+    if not HF_TOKEN:
+        print("КРИТИЧЕСКАЯ ОШИБКА: Переменная HF_TOKEN пустая в Render!")
+    else:
+        print(f"Токен ИИ успешно загружен. Первые символы: {HF_TOKEN[:6]}...")
+
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         app.add_handler(CommandHandler("start", start))
