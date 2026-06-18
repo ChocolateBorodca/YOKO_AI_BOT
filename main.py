@@ -12,7 +12,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
+client = InferenceClient("Qwen/Qwen2.5-14B-Instruct", token=HF_TOKEN)
 
 DB_FILE = "yoko_database.db"
 
