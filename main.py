@@ -14,6 +14,9 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 
+# СЮДА ВПИШИ СВОЙ ID ИЗ ТЕЛЕГРАМА, ЧТОБЫ ПРЕМИУМ НИКОГДА НЕ СЛЕТАЛ
+YOUR_TELEGRAM_ID = 8678792050  # Замени эти цифры на свой ID, если он другой
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -22,6 +25,9 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    if user_id == YOUR_TELEGRAM_ID:
+        return 1, "mellstroy"  # Создатель всегда имеет вечный Премиум и режим Меллстроя
+        
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
@@ -58,7 +64,7 @@ class Health(BaseHTTPRequestHandler):
 
 async def set_default_commands(application):
     commands = [
-        BotCommand("start", "Запустить бота"),
+        BotCommand("start", "Запустить бота и увидеть команды"),
         BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
         BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (1 звезда)"),
@@ -67,7 +73,16 @@ async def set_default_commands(application):
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет я YOKO! Используй меню команд слева для суеты!")
+    # Теперь при старте бот четко пишет, какие команды нажимать
+    start_info = (
+        "Привет я YOKO! Я ИИ бот бурмалда.\n\n"
+        "Вот список всех доступных команд, нажми на любую:\n"
+        "/yoko — Переключить на обычный вежливый ИИ (Бесплатно)\n"
+        "/buy — Открыть платный режим МЕЛЛСТРОЯ за 1 звезду\n"
+        "/mellstroy — Включить режим Меллстроя обратно (Если куплен)\n"
+        "/profile — Посмотреть свой ID и статус подписки"
+    )
+    await update.message.reply_text(start_info)
 
 async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -113,13 +128,13 @@ async def handle_ai_logic(user_text, current_mode):
         response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
         answer = ""
         if isinstance(response, list) and len(response) > 0:
-            item = response[0]
+            item = response
             if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
         elif isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message'].get('content', '')
+            if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
             elif 'message' in response: answer = response['message'].get('content', '')
         if not answer:
-            try: answer = response.choices[0].message.content
+            try: answer = response.choices.message.content
             except: answer = str(response)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
         return answer
