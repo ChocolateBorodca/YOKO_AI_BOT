@@ -7,6 +7,7 @@ from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 from utils import translate_to_burmalda, transcribe_audio
+from photo_service import generate_flux_image
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -31,13 +32,9 @@ def get_user_data(user_id):
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
-    
-    # ИСПРАВЛЕНО: для создателя всегда Премиум=1, но режим берётся настоящий из базы данных
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
-        if not row:
-            return 1, "mellstroy"
+        if not row: return 1, "mellstroy"
         return 1, row[1]
-        
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -75,19 +72,21 @@ async def set_default_commands(application):
         BotCommand("start", "Запустить бота и увидеть команды"),
         BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
-        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (1 звезда)"),
-        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
+        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (15 звезд)"),
+        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ"),
+        BotCommand("photo", "🖼️ Сгенерировать фото (Премиум)")
     ]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_info = (
-        "Привет я YOKO! Я ИИ бот бурмалда.\n\n"
-        "Вот список всех доступных команд, нажми на любую:\n"
-        "/yoko — Переключить на обычный вежливый ИИ (Бесплатно)\n"
-        "/buy — Открыть платный режим МЕЛЛСТРОЯ за 1 звезду\n"
-        "/mellstroy — Включить режим Меллстроя обратно\n"
-        "/profile — Посмотреть свой ID и статус подписки"
+         "Привет я YOKO! Я ИИ бот бурмалда.\n"
+         "Вот список всех доступных команд:\n"
+         "/yoko — Обычный вежливый ИИ\n"
+         "/buy — Купить режим МЕЛЛСТРОЯ за 15 звезд\n"
+         "/mellstroy — Вернуть режим Меллстроя\n"
+         "/photo <запрос> — Сгенерировать картинку (Премиум)\n"
+         "/profile — Твой статус подписки"
     )
     await update.message.reply_text(start_info)
 
@@ -98,7 +97,7 @@ async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        prices = [LabeledPrice("Бурмалда Premium", 1)]
+        prices = [LabeledPrice("Бурмалда Premium", 15)]
         await context.bot.send_invoice(
             chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
             description="Открывает Premium режим!", payload="yoko_premium_payload",
@@ -129,30 +128,41 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
+async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, current_mode = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ Функция доступна только для Premium боровов! Жми /buy 🎰")
+        return
+    prompt = " ".join(context.args)
+    if not prompt:
+        await update.message.reply_text("Напиши запрос после команды, например:\n/photo крутой боров в казино")
+        return
+    wait_msg = "Держи суетость, ч рисую твою фотокарточкусть... 🎰" if current_mode == "mellstroy" else "Генерирую изображение, пожалуйста подождите... 🎨"
+    status_msg = await update.message.reply_text(wait_msg)
+    photo_buffer = generate_flux_image(prompt, client)
+    if not photo_buffer:
+        await status_msg.edit_text("🔴 Не удалось сгенерировать фото. Попробуй позже!")
+        return
+    caption_text = "Твоя фотокарточкасть готова, легенда! 🔥" if current_mode == "mellstroy" else "Ваше изображение успешно сгенерировано! ✨"
+    await status_msg.delete()
+    await context.bot.send_photo(chat_id=update.message.chat_id, photo=photo_buffer, caption=caption_text)
+
 async def handle_ai_logic(user_text, current_mode):
     prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     try:
         response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
-        
         answer = ""
-        try:
-            answer = response.choices.message.content
+        try: answer = response.choices.message.content
         except:
             if isinstance(response, list) and len(response) > 0:
-                item = response[0]
-                if isinstance(item, dict) and 'message' in item:
-                    answer = item['message'].get('content', '')
+                item = response
+                if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0:
-                    answer = response['choices'][0]['message'].get('content', '')
-                elif 'message' in response:
-                    answer = response['message'].get('content', '')
-
-        if not answer:
-            answer = str(response)
-
-        if current_mode == "mellstroy": 
-            answer = translate_to_burmalda(answer)
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                elif 'message' in response: answer = response['message'].get('content', '')
+        if not answer: answer = str(response)
+        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
         return answer
     except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
@@ -198,10 +208,4 @@ if __name__ == '__main__':
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
         app.add_handler(CommandHandler("buy", buy_premium))
-        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
-        app.add_handler(CommandHandler("profile", cmd_profile))
-        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-        app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-        app.run_polling(drop_pending_updates=True)
+        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))app.add_handler(CommandHandler("profile", cmd_profile))app.add_handler(CommandHandler("photo", cmd_photo))app.add_handler(PreCheckoutQueryHandler(precheckout_callback))app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))app.add_handler(MessageHandler(filters.VOICE, handle_voice))app.run_polling(drop_pending_updates=True)
