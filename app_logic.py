@@ -26,13 +26,22 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    # ЖЕСТКАЯ ПРОВЕРКА АДМИНА ДО ВСЕХ ЗАПРОСОВ К БД
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
-        return 1, "mellstroy"
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT mode FROM users WHERE user_id = ?', (int(user_id),))
+        row = cursor.fetchone()
+        conn.close()
+        current_mode = row[0] if (row and row[0]) else "mellstroy"
+        return 1, str(current_mode)
+
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
     row = cursor.fetchone()
     conn.close()
+    
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -40,6 +49,8 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
+        
+    # ИСПРАВЛЕНО: Достаем элементы строго по индексам кортежа row[0] и row[1]
     return int(row[0]), str(row[1])
 
 def set_user_premium(user_id):
@@ -58,16 +69,16 @@ def set_user_mode(user_id, mode):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_info = (
-         "Привет я YOKO! Я ИИ бот-помощник.\n\n"
-         "Вот список всех доступных команд:\n"
-         "/yoko — Обычный вежливый ИИ (Бесплатно)\n"
-         "/buy — Открыть расширенный Премиум доступ за 15 звезд\n"
-         "/mellstroy — Вернуть режим Меллстроя (Если куплен)\n"
-         "/photo <запрос> — Сгенерировать изображение ИИ (Премиум)\n"
-         "/find_clients — ИИ-поиск актуальных заказов и клиентов из сети\n"
-         "/profile — Посмотреть свой статус подписки"
+         "🚀 **Привет я YOKO! Я универсальный ИИ-ассистент.**\n\n"
+         "Вот список всех доступных команд проекта:\n"
+         "😇 /yoko — Обычный вежливый ИИ (Бесплатно)\n"
+         "⚡ /buy — Открыть расширенный Премиум доступ за 15 звезд\n"
+         "🎰 /mellstroy — Вернуть режим Меллстроя (Если куплен)\n"
+         "🔍 /find_clients — ИИ-поиск актуальных заказов и клиентов из сети (Премиум)\n"
+         "🖼️ /photo <запрос> — Сгенерировать ИИ-изображение FLUX (Премиум)\n"
+         "📋 /profile — Посмотреть свой ID и статус подписки"
     )
-    await update.message.reply_text(start_info)
+    await update.message.reply_text(start_info, parse_mode="Markdown")
 
 async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type in ['group', 'supergroup']:
@@ -80,10 +91,21 @@ async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         prices = [LabeledPrice("Премиум доступ YOKO AI", 15)]
+        
+        # ДОБАВЛЕНО: Подробное сочное описание всех функций внутрь инвойса оплаты!
+        full_description = (
+            "🔥 Разблокируйте все возможности искусственного интеллекта:\n\n"
+            "1. 🔍 Модуль ИИ-поиска клиентов из сети и Telegram-каналов по вашей профессии.\n"
+            "2. 🖼️ Генерация качественных ИИ-фотографий через нейросеть FLUX по команде /photo.\n"
+            "3. 🎙️ Безлимитное распознавание и анализ ваших голосовых сообщений (ГС).\n"
+            "4. 👥 Работа умного ИИ-ассистента внутри групповых чатов для вас и ваших друзей.\n"
+            "5. 🧠 Расширенная память контекста диалога для ведения сложных бесед."
+        )
+        
         await context.bot.send_invoice(
             chat_id=update.message.chat_id, 
             title="⚡ YOKO AI — Премиум функции",
-            description="Активация расширенного ИИ-функционала: безлимитный анализ ГС, генерация фото, работа ИИ ассистента в группах, память контекста и модуль ИИ-поиска клиентов.", 
+            description=full_description[:250], # Telegram режет описание, если оно длиннее 255 символов
             payload="yoko_premium_payload", provider_token="", currency="XTR", prices=prices
         )
     except Exception as e: logging.error(f"Ошибка счета: {e}")
@@ -93,7 +115,7 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_premium(update.message.from_user.id)
-    await update.message.reply_text("⚡ Премиум-доступ успешно активирован! Все расширенные и поисковые ИИ-функции разблокированы.")
+    await update.message.reply_text("⚡ Премиум-доступ успешно активирован! Все расширенные, поисковые и генеративные ИИ-функции разблокированы.")
 
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type in ['group', 'supergroup']:
@@ -113,26 +135,6 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_str = "Активирован (Premium)" if is_premium else "Не активирован"
     mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
-
-async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    is_premium, current_mode = get_user_data(user_id)
-    if not is_premium:
-        await update.message.reply_text("❌ Функция генерации фото доступна только для Premium пользователей! Жми /buy ⚡")
-        return
-    prompt = " ".join(context.args)
-    if not prompt:
-        await update.message.reply_text("Напиши запрос после команды, например:\n/photo робот программист в космосе")
-        return
-    wait_msg = "Держи суетость, ч рисую твою фотокарточкусть... 🎰" if current_mode == "mellstroy" else "Генерирую изображение, пожалуйста подождите... 🎨"
-    status_msg = await update.message.reply_text(wait_msg)
-    photo_buffer = generate_flux_image(prompt, client)
-    if not photo_buffer:
-        await status_msg.edit_text("🔴 Не удалось сгенерировать фото. Попробуй позже!")
-        return
-    caption_text = "Твоя фотокарточкасть готова, легенда! 🔥" if current_mode == "mellstroy" else "Ваше изображение успешно сгенерировано! ✨"
-    await status_msg.delete()
-    await context.bot.send_photo(chat_id=update.message.chat_id, photo=photo_buffer, caption=caption_text)
 
 async def handle_ai_logic(user_id, user_text, current_mode):
     prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
