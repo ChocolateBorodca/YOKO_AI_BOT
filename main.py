@@ -7,7 +7,7 @@ from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 
-from utils import translate_to_burmalda, transcribe_audio
+from utils import translate_to_burmalda, process_voice_message
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -15,7 +15,6 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 
-# Твой жестко прописанный ID, который давал тебе безлимитный Премиум
 YOUR_TELEGRAM_ID = 1151550758
 
 def init_db():
@@ -132,10 +131,9 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 🧠 Расширенная память контекста диалога."
         )
         await context.bot.send_invoice(
-            chat_id=update.message.chat_id, 
-            title="⚡ YOKO AI — Премиум функции",
-            description=full_description[:250], 
-            payload="yoko_premium_payload", provider_token="", currency="XTR", prices=prices
+            chat_id=update.message.chat_id, title="⚡ YOKO AI — Премиум функции",
+            description=full_description[:250], payload="yoko_premium_payload",
+            provider_token="", currency="XTR", prices=prices
         )
     except Exception as e: logging.error(f"Ошибка счета: {e}")
 
@@ -164,18 +162,27 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_ai_logic(user_id, user_text, current_mode):
     prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     save_message(user_id, "user", user_text)
-    messages = [{"role": "system", "content": prompt}]
-    history = get_chat_history(user_id, limit=6)
-    messages.extend(history)
+    messages = [{"role": "system", "content": prompt}, {"role": "user", "content": user_text}]
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # СВЕРХНАДЕЖНЫЙ ОБНОВЛЕННЫЙ РАЗБОР ЛЮБОГО ТИПА ОТВЕТА ОТ HUGGING FACE
         answer = ""
         if isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message']['content']
-            elif 'message' in response: answer = response['message']['content']
+            if 'choices' in response and len(response['choices']) > 0:
+                answer = response['choices']['message']['content']
+            elif 'message' in response:
+                answer = response['message']['content']
+        elif isinstance(response, list) and len(response) > 0:
+            item = response
+            if isinstance(item, dict) and 'message' in item:
+                answer = item['message'].get('content', '')
         else:
             try: answer = response.choices.message.content
-            except: answer = str(response)
+            except:
+                try: answer = response.choices.message.content
+                except: answer = str(response)
+
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -192,6 +199,10 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
+async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Передаем всю тяжелую обработку ГС в изолированную функцию в utils.py
+    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
+
 if __name__ == '__main__':
     init_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
@@ -203,8 +214,9 @@ if __name__ == '__main__':
         loop.run_until_complete(set_default_commands(app))
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
-        app.add_handler(CommandHandler("buy", buy_premium))
+        app.add_handler(app.add_handler(CommandHandler("buy", buy_premium)))
         app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
         app.add_handler(CommandHandler("profile", cmd_profile))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+        app.add_handler(MessageHandler(filters.VOICE, handle_voice_gateway))
         app.run_polling(drop_pending_updates=True)
