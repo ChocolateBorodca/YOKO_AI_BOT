@@ -7,10 +7,7 @@ from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 
-# Импортируем базовые функции памяти и ИИ
 from utils import translate_to_burmalda, transcribe_audio, init_memory_db, save_message, get_chat_history
-
-# Импортируем функции управления чатами из твоего group_service.py
 from group_service import init_group_db, handle_group_chat, set_group_mode_db
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -36,9 +33,12 @@ def get_user_data(user_id):
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
+    
+    # ИСПРАВЛЕННЫЙ БЛОК: извлекаем режим из кортежа, убирая лишние вложения
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row: return 1, "mellstroy"
-        return 1, (row if isinstance(row, tuple) else "mellstroy")
+        return 1, row[1]
+        
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -46,7 +46,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return row, row
+    return row[0], row[1]
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -144,16 +144,19 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # СВЕРХНАДЕЖНЫЙ РАЗБОР ОТВЕТА ОТ HUGGING FACE
         answer = ""
         try:
-            answer = response.choices.get('message', {}).get('content', '') if isinstance(response, dict) else response.choices.message.content
+            answer = response.choices.message.content
         except:
             if isinstance(response, list) and len(response) > 0:
-                item = response
+                item = response[0]
                 if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message'].get('content', '')
                 elif 'message' in response: answer = response['message'].get('content', '')
+        
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -161,12 +164,9 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ЕСЛИ ЭТО ГРУППА — полностью отдаем управление нашему group_service.py
     if update.message.chat.type in ['group', 'supergroup']:
         await handle_group_chat(update, context, handle_ai_logic)
         return
-
-    # Логика для личных сообщений (ЛС)
     user_id = update.message.from_user.id
     user_text = update.message.text
     is_premium, current_mode = get_user_data(user_id)
