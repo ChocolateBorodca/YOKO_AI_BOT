@@ -30,37 +30,44 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    # ЖЕСТКАЯ ПРОВЕРКА АДМИНА ДО ВСЕХ ОПЕРАЦИЙ
-    if ADMIN_ID != 0 and user_id == ADMIN_ID:
+    # ПРЯМАЯ И НАДЕЖНАЯ ПРОВЕРКА АДМИНА
+    if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
         
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
+    try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (user_id,))
-        conn.commit()
+        cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
+        row = cursor.fetchone()
         conn.close()
-        return 0, "default"
         
-    return int(row[0]), str(row[1])
+        if not row:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (int(user_id), "default"))
+            conn.commit()
+            conn.close()
+            return 0, "default"
+            
+        # Гарантированно распаковываем только чистые типы данных
+        is_prem = int(row[0]) if row[0] is not None else 0
+        current_mode = str(row[1]) if row[1] is not None else "default"
+        return is_prem, current_mode
+    except Exception as e:
+        logging.error(f"Ошибка чтения БД: {e}")
+        return 0, "default"
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, "mellstroy") ON CONFLICT(user_id) DO UPDATE SET is_premium=1, mode="mellstroy"', (user_id,))
+    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, "mellstroy") ON CONFLICT(user_id) DO UPDATE SET is_premium=1, mode="mellstroy"', (int(user_id),))
     conn.commit()
     conn.close()
 
 def set_user_mode(user_id, mode):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET mode=?', (user_id, mode, mode))
+    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET mode=?', (int(user_id), str(mode), str(mode)))
     conn.commit()
     conn.close()
 
@@ -149,17 +156,21 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # Полностью неубиваемый парсинг ответа
         answer = ""
-        if hasattr(response, 'choices') and response.choices:
-            try: answer = response.choices.message.content
-            except: pass
-        if not answer:
-            if isinstance(response, list) and len(response) > 0:
-                item = response
-                if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
-            elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
-                elif 'message' in response: answer = response['message'].get('content', '')
+        if isinstance(response, dict):
+            if 'choices' in response and len(response['choices']) > 0:
+                answer = response['choices'][0]['message']['content']
+            elif 'message' in response:
+                answer = response['message']['content']
+        elif isinstance(response, list) and len(response) > 0:
+            if isinstance(response[0], dict) and 'message' in response[0]:
+                answer = response[0]['message']['content']
+        else:
+            try: answer = response.choices[0].message.content
+            except: answer = str(response)
+
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -168,12 +179,15 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    
     is_searching = await handle_lead_steps(update, context, client)
     if is_searching: return
+
     if update.message.chat.type in ['group', 'supergroup']:
         register_group_for_sueta(update.message.chat_id)
         await handle_group_chat(update, context, handle_ai_logic)
         return
+
     user_text = update.message.text
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
@@ -202,22 +216,22 @@ if __name__ == '__main__':
     init_lead_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
     if TELEGRAM_TOKEN:
-        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        import asyncio
-        try: loop = asyncio.get_event_loop()
-        except:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.run_until_complete(set_default_commands(app))
-        app.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("yoko", cmd_yoko))
-        app.add_handler(CommandHandler("buy", buy_premium))
-        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
-        app.add_handler(CommandHandler("profile", cmd_profile))
-        app.add_handler(CommandHandler("find_clients", start_lead_search))
-        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-        app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-        app.run_polling(drop_pending_updates=True)
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    import asyncio
+    try: loop = asyncio.get_event_loop()
+    except:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    lapp.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("yoko", cmd_yoko))
+    app.add_handler(CommandHandler("buy", buy_premium))
+    app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
+    app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("find_clients", start_lead_search))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.run_polling(drop_pending_updates=True)oop.run_until_complete(set_default_commands(app)) 
+    
