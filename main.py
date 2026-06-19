@@ -30,15 +30,9 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    # ИСПРАВЛЕНО: Для админа жестко возвращаем чистые типы данных
+    # ЖЕСТКАЯ ПРОВЕРКА АДМИНА ДО ВСЕХ ОПЕРАЦИЙ
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('SELECT mode FROM users WHERE user_id = ?', (user_id,))
-        row = cursor.fetchone()
-        conn.close()
-        current_mode = row[0] if row else "mellstroy"
-        return 1, str(current_mode)
+        return 1, "mellstroy"
         
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -155,21 +149,17 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
-        # Полностью изолированный разбор ответа от Hugging Face
         answer = ""
-        if isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices'][0]['message']['content']
-            elif 'message' in response:
-                answer = response['message']['content']
-        elif isinstance(response, list) and len(response) > 0:
-            if isinstance(response[0], dict) and 'message' in response[0]:
-                answer = response[0]['message']['content']
-        else:
-            try: answer = response.choices[0].message.content
-            except: answer = str(response)
-
+        if hasattr(response, 'choices') and response.choices:
+            try: answer = response.choices.message.content
+            except: pass
+        if not answer:
+            if isinstance(response, list) and len(response) > 0:
+                item = response
+                if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
+            elif isinstance(response, dict):
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                elif 'message' in response: answer = response['message'].get('content', '')
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -178,15 +168,12 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    
     is_searching = await handle_lead_steps(update, context, client)
     if is_searching: return
-
     if update.message.chat.type in ['group', 'supergroup']:
         register_group_for_sueta(update.message.chat_id)
         await handle_group_chat(update, context, handle_ai_logic)
         return
-
     user_text = update.message.text
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
@@ -218,8 +205,10 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         import asyncio
         try: loop = asyncio.get_event_loop()
-            except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-                loop.run_until_complete(set_default_commands(app))
+        except:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.run_until_complete(set_default_commands(app))
         app.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
