@@ -1,9 +1,48 @@
 import re
 import io
+import sqlite3
 import requests
 
+DB_FILE = "yoko_database.db"
+
+def init_memory_db():
+    """Создает таблицу для хранения истории сообщений"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            role TEXT,
+            content TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_message(user_id, role, content):
+    """Сохраняет сообщение в историю"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)', (user_id, role, content))
+    conn.commit()
+    conn.close()
+
+def get_chat_history(user_id, limit=6):
+    """Возвращает последние сообщения диалога для ИИ"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?', (user_id, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Разворачиваем историю в хронологическом порядке
+    history = []
+    for role, content in reversed(rows):
+        history.append({"role": role, "content": content})
+    return history
+
 def translate_to_burmalda(text):
-    """Переводит обычный русский текст на язык Бурмалда по твоим правилам"""
     text = re.sub(r'\bя\b', 'ч', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдед\b', 'дод', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдеда\b', 'дода', text, flags=re.IGNORECASE)
@@ -12,7 +51,6 @@ def translate_to_burmalda(text):
     
     words = text.split()
     burmalda_words = []
-    
     for word in words:
         clean_word = re.sub(r'[^\w\s]', '', word)
         if len(clean_word) > 2 and not clean_word.lower() in ['как', 'что', 'или', 'под', 'для', 'без', 'все']:
@@ -26,11 +64,9 @@ def translate_to_burmalda(text):
                 burmalda_words.append(w)
         else:
             burmalda_words.append(word)
-            
     return " ".join(burmalda_words)
 
 def transcribe_audio(audio_bytes, hf_token):
-    """Распознает голосовые сообщения (ГС) через модель Whisper"""
     try:
         API_URL = "https://huggingface.co"
         headers = {"Authorization": f"Bearer {hf_token}"}
@@ -38,15 +74,3 @@ def transcribe_audio(audio_bytes, hf_token):
         return response.json().get("text", "")
     except:
         return ""
-
-def generate_flux_image(prompt, client):
-    """Генерирует качественные фото через топовую модель FLUX.1-schnell"""
-    try:
-        image = client.text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell")
-        bio = io.BytesIO()
-        bio.name = 'image.jpeg'
-        image.save(bio, 'JPEG')
-        bio.seek(0)
-        return bio
-    except:
-        return None
