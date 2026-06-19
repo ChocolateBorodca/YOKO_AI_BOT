@@ -208,4 +208,5 @@ if __name__ == '__main__':
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
         app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+        app.job_queue.run_repeating(random_sueta_job, interval=1800)
         app.run_polling(drop_pending_updates=True)
