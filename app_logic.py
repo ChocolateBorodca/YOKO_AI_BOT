@@ -25,13 +25,22 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    # ПРЯМАЯ ПРОВЕРКА АДМИНА ДО ВСЕХ ЗАПРОСОВ К БД
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
-        return 1, "mellstroy"
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT mode FROM users WHERE user_id = ?', (int(user_id),))
+        row = cursor.fetchone()
+        conn.close()
+        current_mode = row[0] if row else "mellstroy"
+        return 1, str(current_mode)
+
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
     row = cursor.fetchone()
     conn.close()
+    
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -39,6 +48,8 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
+        
+    # ИСПРАВЛЕНО: Правильно берем элементы из кортежа row по индексам [0] и [1]
     return int(row[0]), str(row[1])
 
 def set_user_premium(user_id):
@@ -120,18 +131,20 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # СВЕРХНАДЕЖНЫЙ ОДНОТИПНЫЙ РАЗБОР ОТВЕТА
         answer = ""
         if isinstance(response, dict):
             if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices']['message']['content']
+                answer = response['choices'][0]['message']['content']
             elif 'message' in response:
                 answer = response['message']['content']
         elif isinstance(response, list) and len(response) > 0:
-            item = response
+            item = response[0]
             if isinstance(item, dict) and 'message' in item:
                 answer = item['message'].get('content', '')
         else:
-            try: answer = response.choices.message.content
+            try: answer = response.choices[0].message.content
             except: answer = str(response)
 
         if not answer: answer = str(response)
