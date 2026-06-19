@@ -49,7 +49,7 @@ def get_user_data(user_id):
         conn.close()
         return 0, "default"
         
-    # ИСПРАВЛЕНО: Правильно берем элементы из кортежа row по индексам [0] и [1]
+    # ИСПРАВЛЕНО: Извлекаем значения из кортежа базы данных строго по индексам
     return int(row[0]), str(row[1])
 
 def set_user_premium(user_id):
@@ -131,20 +131,18 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
-        # СВЕРХНАДЕЖНЫЙ ОДНОТИПНЫЙ РАЗБОР ОТВЕТА
         answer = ""
         if isinstance(response, dict):
             if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices'][0]['message']['content']
+                answer = response['choices']['message']['content']
             elif 'message' in response:
                 answer = response['message']['content']
         elif isinstance(response, list) and len(response) > 0:
-            item = response[0]
+            item = response
             if isinstance(item, dict) and 'message' in item:
                 answer = item['message'].get('content', '')
         else:
-            try: answer = response.choices[0].message.content
+            try: answer = response.choices.message.content
             except: answer = str(response)
 
         if not answer: answer = str(response)
