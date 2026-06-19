@@ -2,6 +2,8 @@ import os
 import threading
 import logging
 import sqlite3
+import re
+import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
@@ -41,7 +43,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -49,7 +51,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -165,8 +167,6 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages = [{"role": "system", "content": prompt}, {"role": "user", "content": user_text}]
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
-        # СВЕРХНАДЕЖНЫЙ ОБНОВЛЕННЫЙ РАЗБОР ЛЮБОГО ТИПА ОТВЕТА ОТ HUGGING FACE
         answer = ""
         if isinstance(response, dict):
             if 'choices' in response and len(response['choices']) > 0:
@@ -200,7 +200,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Передаем всю тяжелую обработку ГС в изолированную функцию в utils.py
     await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
 
 if __name__ == '__main__':
@@ -209,12 +208,15 @@ if __name__ == '__main__':
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         import asyncio
-        try: loop = asyncio.get_event_loop()
-        except RuntimeError: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         loop.run_until_complete(set_default_commands(app))
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
-        app.add_handler(app.add_handler(CommandHandler("buy", buy_premium)))
+        app.add_handler(CommandHandler("buy", buy_premium))
         app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
         app.add_handler(CommandHandler("profile", cmd_profile))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
