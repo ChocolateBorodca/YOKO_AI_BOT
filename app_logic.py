@@ -5,7 +5,7 @@ from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 from huggingface_hub import InferenceClient
 
-from utils import translate_to_burmalda, transcribe_audio, init_memory_db, save_message, get_chat_history
+from utils import translate_to_burmalda, transcribe_audio
 from group_service import init_group_db, handle_group_chat, set_group_mode_db, check_group_premium, get_group_mode
 from sueta_service import init_sueta_db, register_group_for_sueta
 from lead_service import init_lead_db, start_lead_search, handle_lead_steps
@@ -25,8 +25,32 @@ def init_db():
     conn.commit()
     conn.close()
 
+def init_memory_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, role TEXT, content TEXT)')
+    conn.commit()
+    conn.close()
+
+def save_message(user_id, role, content):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)', (int(user_id), str(role), str(content)))
+    conn.commit()
+    conn.close()
+
+def get_chat_history(user_id, limit=6):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?', (int(user_id), limit))
+    rows = cursor.fetchall()
+    conn.close()
+    history = []
+    for role, content in reversed(rows):
+        history.append({"role": str(role), "content": str(content)})
+    return history
+
 def get_user_data(user_id):
-    # ЖЕСТКАЯ ПРОВЕРКА АДМИНА ДО ВСЕХ ЗАПРОСОВ К БД
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -50,7 +74,6 @@ def get_user_data(user_id):
         conn.close()
         return 0, "default"
         
-    # ИСПРАВЛЕНО: Достаем элементы строго по индексам кортежа row[0] и row[1]
     return int(row[0]), str(row[1])
 
 def set_user_premium(user_id):
@@ -91,8 +114,6 @@ async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         prices = [LabeledPrice("Премиум доступ YOKO AI", 15)]
-        
-        # ДОБАВЛЕНО: Подробное сочное описание всех функций внутрь инвойса оплаты!
         full_description = (
             "🔥 Разблокируйте все возможности искусственного интеллекта:\n\n"
             "1. 🔍 Модуль ИИ-поиска клиентов из сети и Telegram-каналов по вашей профессии.\n"
@@ -101,11 +122,10 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "4. 👥 Работа умного ИИ-ассистента внутри групповых чатов для вас и ваших друзей.\n"
             "5. 🧠 Расширенная память контекста диалога для ведения сложных бесед."
         )
-        
         await context.bot.send_invoice(
             chat_id=update.message.chat_id, 
             title="⚡ YOKO AI — Премиум функции",
-            description=full_description[:250], # Telegram режет описание, если оно длиннее 255 символов
+            description=full_description[:250], 
             payload="yoko_premium_payload", provider_token="", currency="XTR", prices=prices
         )
     except Exception as e: logging.error(f"Ошибка счета: {e}")
