@@ -3,209 +3,311 @@ import threading
 import logging
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from telegram import Update, LabeledPrice, BotCommand
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    PreCheckoutQueryHandler,
+    ContextTypes,
+    filters
+)
+
 from huggingface_hub import InferenceClient
 from utils import translate_to_burmalda, transcribe_audio
 from photo_service import generate_flux_image
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-except: ADMIN_ID = 0
+try:
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except:
+    ADMIN_ID = 0
 
-client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
+client = InferenceClient(
+    "Qwen/Qwen2.5-Coder-7B-Instruct",
+    token=HF_TOKEN
+)
+
 DB_FILE = "yoko_database.db"
+
+
+# ================= DB =================
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0, mode TEXT DEFAULT "default")')
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            is_premium INTEGER DEFAULT 0,
+            mode TEXT DEFAULT 'default'
+        )
+    """)
     conn.commit()
     conn.close()
+
 
 def get_user_data(user_id):
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    conn.close()
+    cur = conn.cursor()
+
+    cur.execute("SELECT is_premium, mode FROM users WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
-        if not row: return 1, "mellstroy"
+        conn.close()
+        if not row:
+            return 1, "mellstroy"
         return 1, row[1]
+
     if not row:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (user_id,))
+        cur.execute(
+            "INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, 'default')",
+            (user_id,)
+        )
         conn.commit()
         conn.close()
         return 0, "default"
-    return row[0], row[1]
+
+    conn.close()
+    return row
+
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, "mellstroy") ON CONFLICT(user_id) DO UPDATE SET is_premium=1, mode="mellstroy"', (user_id,))
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO users (user_id, is_premium, mode)
+        VALUES (?, 1, 'mellstroy')
+        ON CONFLICT(user_id)
+        DO UPDATE SET is_premium=1, mode='mellstroy'
+    """, (user_id,))
+
     conn.commit()
     conn.close()
 
+
 def set_user_mode(user_id, mode):
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 1, ?) ON CONFLICT(user_id) DO UPDATE SET mode=?', (user_id, mode, mode))
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO users (user_id, mode)
+        VALUES (?, ?)
+        ON CONFLICT(user_id)
+        DO UPDATE SET mode=excluded.mode
+    """, (user_id, mode))
+
     conn.commit()
     conn.close()
+
+
+# ================= WEB =================
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
 
-async def set_default_commands(application):
+
+# ================= COMMANDS =================
+
+async def set_default_commands(app):
     commands = [
-        BotCommand("start", "Запустить бота и увидеть команды"),
-        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
-        BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
-        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (15 звезд)"),
-        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ"),
-        BotCommand("photo", "🖼️ Сгенерировать фото (Премиум)")
+        BotCommand("start", "Start bot"),
+        BotCommand("yoko", "Normal AI"),
+        BotCommand("buy", "Buy premium"),
+        BotCommand("mellstroy", "Mellstroy mode"),
+        BotCommand("photo", "Generate image"),
+        BotCommand("profile", "Profile")
     ]
-    await application.bot.set_my_commands(commands)
+    await app.bot.set_my_commands(commands)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    start_info = (
-         "Привет я YOKO! Я ИИ бот бурмалда.\n"
-         "Вот список всех доступных команд:\n"
-         "/yoko — Обычный вежливый ИИ\n"
-         "/buy — Купить режим МЕЛЛСТРОЯ за 15 звезд\n"
-         "/mellstroy — Вернуть режим Меллстроя\n"
-         "/photo <запрос> — Сгенерировать картинку (Премиум)\n"
-         "/profile — Твой статус подписки"
+    await update.message.reply_text(
+        "Привет! Я YOKO бот 🤖\n"
+        "/yoko — обычный режим\n"
+        "/buy — премиум\n"
+        "/photo — генерация фото\n"
+        "/profile — профиль"
     )
-    await update.message.reply_text(start_info)
+
 
 async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    set_user_mode(user_id, "default")
-    await update.message.reply_text("😇 Теперь с тобой общается обычный ИИ YOKO.")
+    set_user_mode(update.message.from_user.id, "default")
+    await update.message.reply_text("Обычный режим включен")
+
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        prices = [LabeledPrice("Бурмалда Premium", 15)]
-        await context.bot.send_invoice(
-            chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
-            description="Открывает Premium режим!", payload="yoko_premium_payload",
-            provider_token="", currency="XTR", prices=prices
-        )
-    except Exception as e: logging.error(f"Ошибка счета: {e}")
+    prices = [LabeledPrice("Premium", 15)]
+    await context.bot.send_invoice(
+        chat_id=update.effective_chat.id,
+        title="Premium",
+        description="Unlock all features",
+        payload="premium_payload",
+        provider_token="",
+        currency="XTR",
+        prices=prices
+    )
+
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
+
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_premium(update.message.from_user.id)
-    await update.message.reply_text("🎰 Премиумность активирована! Режим Меллстроя-Бурмалды включен! 🔥")
+    await update.message.reply_text("Премиум активирован!")
+
 
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     is_premium, _ = get_user_data(user_id)
+
     if not is_premium:
-        await update.message.reply_text("❌ Сначала нужно открыть этот режим через /buy 🎰")
+        await update.message.reply_text("Нужен премиум /buy")
         return
+
     set_user_mode(user_id, "mellstroy")
-    await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Ч снова общаюсь на языке Бурмалда. 🎰")
+    await update.message.reply_text("Mellstroy режим включен")
+
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    is_premium, current_mode = get_user_data(user_id)
-    status_str = "Активирован (Premium)" if is_premium else "Не активирован"
-    mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
-    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
+    is_premium, mode = get_user_data(user_id)
+
+    await update.message.reply_text(
+        f"ID: {user_id}\n"
+        f"Premium: {is_premium}\n"
+        f"Mode: {mode}"
+    )
+
 
 async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    is_premium, current_mode = get_user_data(user_id)
+    is_premium, mode = get_user_data(user_id)
+
     if not is_premium:
-        await update.message.reply_text("❌ Функция доступна только для Premium боровов! Жми /buy 🎰")
+        await update.message.reply_text("Only premium users")
         return
+
     prompt = " ".join(context.args)
     if not prompt:
-        await update.message.reply_text("Напиши запрос после команды, например:\n/photo крутой боров в казино")
+        await update.message.reply_text("Напиши запрос")
         return
-    wait_msg = "Держи суетость, ч рисую твою фотокарточкусть... 🎰" if current_mode == "mellstroy" else "Генерирую изображение, пожалуйста подождите... 🎨"
-    status_msg = await update.message.reply_text(wait_msg)
-    photo_buffer = generate_flux_image(prompt, client)
-    if not photo_buffer:
-        await status_msg.edit_text("🔴 Не удалось сгенерировать фото. Попробуй позже!")
-        return
-    caption_text = "Твоя фотокарточкасть готова, легенда! 🔥" if current_mode == "mellstroy" else "Ваше изображение успешно сгенерировано! ✨"
-    await status_msg.delete()
-    await context.bot.send_photo(chat_id=update.message.chat_id, photo=photo_buffer, caption=caption_text)
 
-async def handle_ai_logic(user_text, current_mode):
-    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
+    msg = await update.message.reply_text("Генерация...")
+
+    photo = generate_flux_image(prompt, client)
+
+    if not photo:
+        await msg.edit_text("Ошибка генерации")
+        return
+
+    await msg.delete()
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=photo
+    )
+
+
+# ================= AI =================
+
+async def handle_ai(user_text, mode):
+    prompt = "Ты дерзкий ИИ" if mode == "mellstroy" else "Ты обычный ИИ"
+
     try:
-        response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
-        answer = ""
-        try: answer = response.choices.message.content
-        except:
-            if isinstance(response, list) and len(response) > 0:
-                item = response
-                if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
-            elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
-                elif 'message' in response: answer = response['message'].get('content', '')
-        if not answer: answer = str(response)
-        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
+        response = client.chat_completion(
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_text}
+            ],
+            max_tokens=200
+        )
+
+        answer = response.choices[0].message.content
+
+        if mode == "mellstroy":
+            answer = translate_to_burmalda(answer)
+
         return answer
-    except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
+
+    except Exception as e:
+        return f"Error: {str(e)[:50]}"
+
+
+# ================= CHAT =================
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    user_text = update.message.text
-    if update.message.chat.type in ['group', 'supergroup']:
-        is_premium, current_mode = get_user_data(user_id)
-        if not is_premium:
-            await update.message.reply_text("❌ Только для Премиум пользователей.")
-            await context.bot.leave_chat(update.message.chat_id)
-            return
-        await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
-        return
-    is_premium, current_mode = get_user_data(user_id)
-    await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
+    _, mode = get_user_data(user_id)
+
+    text = update.message.text
+    answer = await handle_ai(text, mode)
+
+    await update.message.reply_text(answer)
+
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    is_premium, current_mode = get_user_data(user_id)
+    is_premium, mode = get_user_data(user_id)
+
     if not is_premium:
-        await update.message.reply_text("❌ ГС доступно только Premium пользователям.")
+        await update.message.reply_text("Premium only")
         return
-    await update.message.reply_text("🎙️ Расшифровываю голосовое...")
+
     file = await context.bot.get_file(update.message.voice.file_id)
     audio = await file.download_as_bytearray()
-    text = transcribe_audio(bytes(audio), HF_TOKEN)
-    if not text:
-        await update.message.reply_text("❌ Не удалось разобрать слова.")
-        return
-    answer = await handle_ai_logic(text, current_mode)
-    await update.message.reply_text(f"💬 Вы: {text}\n\n🤖 Ответ: {answer}")
 
-if __name__ == '__main__':
+    text = transcribe_audio(bytes(audio), HF_TOKEN)
+
+    if not text:
+        await update.message.reply_text("Не понял голос")
+        return
+
+    answer = await handle_ai(text, mode)
+    await update.message.reply_text(answer)
+
+
+# ================= MAIN =================
+
+if __name__ == "__main__":
     init_db()
-    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
+
+    threading.Thread(
+        target=lambda: HTTPServer(("0.0.0.0", 10000), Health).serve_forever(),
+        daemon=True
+    ).start()
+
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
         import asyncio
-        try: loop = asyncio.get_event_loop()
-        except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+        loop = asyncio.get_event_loop()
         loop.run_until_complete(set_default_commands(app))
+
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
         app.add_handler(CommandHandler("buy", buy_premium))
-        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))app.add_handler(CommandHandler("profile", cmd_profile))app.add_handler(CommandHandler("photo", cmd_photo))app.add_handler(PreCheckoutQueryHandler(precheckout_callback))app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))app.add_handler(MessageHandler(filters.VOICE, handle_voice))app.run_polling(drop_pending_updates=True)
+        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
+        app.add_handler(CommandHandler("profile", cmd_profile))
+        app.add_handler(CommandHandler("photo", cmd_photo))
+
+        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+        app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
+        app.run_polling(drop_pending_updates=True)
