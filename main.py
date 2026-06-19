@@ -1,14 +1,59 @@
 import os
 import threading
+import logging
+import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from telegram import BotCommand
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, filters
+from telegram import Update, LabeledPrice, BotCommand
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
+from huggingface_hub import InferenceClient
+from utils import translate_to_burmalda, transcribe_audio
 
-import app_logic
-from sueta_service import random_sueta_job
-from lead_service import start_lead_search
-
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+HF_TOKEN = os.getenv("HF_TOKEN")
+client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
+DB_FILE = "yoko_database.db"
+
+# Твой проверенный ID, который железно давал тебе Премиум
+YOUR_TELEGRAM_ID = 1151550758
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0, mode TEXT DEFAULT "default")')
+    conn.commit()
+    conn.close()
+
+def get_user_data(user_id):
+    if int(user_id) == YOUR_TELEGRAM_ID:
+        return 1, "mellstroy"
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (int(user_id),))
+        conn.commit()
+        conn.close()
+        return 0, "default"
+    return row[0], row[1]
+
+def set_user_premium(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET is_premium = 1, mode = "mellstroy" WHERE user_id = ?', (int(user_id),))
+    conn.commit()
+    conn.close()
+
+def set_user_mode(user_id, mode):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET mode = ? WHERE user_id = ?', (str(mode), int(user_id)))
+    conn.commit()
+    conn.close()
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -21,43 +66,119 @@ class Health(BaseHTTPRequestHandler):
 
 async def set_default_commands(application):
     commands = [
-        BotCommand("start", "Запустить бота и увидеть команды"),
-        BotCommand("profile", "👑 Твой статус (Русский)"),
+        BotCommand("start", "Запустить бота"),
+        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
-        BotCommand("buy", "⚡ Купить Премиум функции (15 звезд)"),
-        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ"),
-        BotCommand("find_clients", "🔍 Найти клиентов и заказы (Премиум)")
+        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (1 звезда)"),
+        BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
     ]
     await application.bot.set_my_commands(commands)
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет я YOKO! Используй меню команд слева для суеты!")
+
+async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    set_user_mode(user_id, "default")
+    await update.message.reply_text("😇 Теперь с тобой общается обычный ИИ YOKO.")
+
+async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        prices = [LabeledPrice("Бурмалда Premium", 1)]
+        await context.bot.send_invoice(
+            chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
+            description="Открывает Premium режим!", payload="yoko_premium_payload",
+            provider_token="", currency="XTR", prices=prices
+        )
+    except Exception as e: logging.error(f"Ошибка счета: {e}")
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    set_user_premium(update.message.from_user.id)
+    await update.message.reply_text("🎰 Премиумность активирована! Режим Меллстроя-Бурмалды включен! 🔥")
+
+async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, _ = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ Сначала нужно открыть этот режим через /buy 🎰")
+        return
+    set_user_mode(user_id, "mellstroy")
+    await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Ч снова общаюсь на языке Бурмалда. 🎰")
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, current_mode = get_user_data(user_id)
+    status_str = "Активирован (Premium)" if is_premium else "Не активирован"
+    mode_str = "Меллстрой на Бурмалде" if current_mode == "mellstroy" else "Обычный YOKO"
+    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Режим: {mode_str}")
+
+async def handle_ai_logic(user_text, current_mode):
+    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
+    try:
+        response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
+        answer = ""
+        if isinstance(response, list) and len(response) > 0:
+            item = response[0]
+            if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
+        elif isinstance(response, dict):
+            if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message'].get('content', '')
+            elif 'message' in response: answer = response['message'].get('content', '')
+        if not answer:
+            try: answer = response.choices[0].message.content
+            except: answer = str(response)
+        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
+        return answer
+    except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    user_text = update.message.text
+    if update.message.chat.type in ['group', 'supergroup']:
+        is_premium, current_mode = get_user_data(user_id)
+        if not is_premium:
+            await update.message.reply_text("❌ Только для Премиум пользователей.")
+            await context.bot.leave_chat(update.message.chat_id)
+            return
+        await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
+        return
+    is_premium, current_mode = get_user_data(user_id)
+    await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, current_mode = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ ГС доступно только Premium пользователям.")
+        return
+    await update.message.reply_text("🎙️ Расшифровываю голосовое...")
+    file = await context.bot.get_file(update.message.voice.file_id)
+    audio = await file.download_as_bytearray()
+    text = transcribe_audio(bytes(audio), HF_TOKEN)
+    if not text:
+        await update.message.reply_text("❌ Не удалось разобрать слова.")
+        return
+    answer = await handle_ai_logic(text, current_mode)
+    await update.message.reply_text(f"💬 Вы: {text}\n\n🤖 Ответ: {answer}")
+
 if __name__ == '__main__':
-    app_logic.init_db()
-    app_logic.init_group_db()
-    app_logic.init_memory_db()
-    app_logic.init_sueta_db()
-    app_logic.init_lead_db()
-    
+    init_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
-    
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        try: loop = asyncio.get_event_loop()
+        except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
         loop.run_until_complete(set_default_commands(app))
-        app.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
-        
-        app.add_handler(CommandHandler("start", app_logic.start))
-        app.add_handler(CommandHandler("yoko", app_logic.cmd_yoko))
-        app.add_handler(CommandHandler("buy", app_logic.buy_premium))
-        app.add_handler(CommandHandler("mellstroy", app_logic.cmd_mellstroy))
-        app.add_handler(CommandHandler("profile", app_logic.cmd_profile))
-        app.add_handler(CommandHandler("find_clients", start_lead_search))
-        app.add_handler(PreCheckoutQueryHandler(app_logic.precheckout_callback))
-        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, app_logic.successful_payment_callback))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, app_logic.chat))
-        app.add_handler(MessageHandler(filters.VOICE, app_logic.handle_voice))
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("yoko", cmd_yoko))
+        app.add_handler(CommandHandler("buy", buy_premium))
+        app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
+        app.add_handler(CommandHandler("profile", cmd_profile))
+        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+        app.add_handler(MessageHandler(filters.VOICE, handle_voice))
         app.run_polling(drop_pending_updates=True)
