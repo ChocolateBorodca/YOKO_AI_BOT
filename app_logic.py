@@ -32,7 +32,7 @@ def get_user_data(user_id):
         cursor.execute('SELECT mode FROM users WHERE user_id = ?', (int(user_id),))
         row = cursor.fetchone()
         conn.close()
-        current_mode = row[0] if row else "mellstroy"
+        current_mode = row[0] if (row and row[0]) else "mellstroy"
         return 1, str(current_mode)
 
     conn = sqlite3.connect(DB_FILE)
@@ -49,7 +49,6 @@ def get_user_data(user_id):
         conn.close()
         return 0, "default"
         
-    # ИСПРАВЛЕНО: Извлекаем значения из кортежа базы данных строго по индексам
     return int(row[0]), str(row[1])
 
 def set_user_premium(user_id):
