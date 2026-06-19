@@ -1,17 +1,14 @@
 import os
 import sqlite3
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
-from huggingface_hub import InferenceClient
 
 from utils import translate_to_burmalda, process_voice_message
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-# ЖЕЛЕЗНЫЙ ШАНС: Переключаемся на вечно живую модель Google Gemma 2
-client = InferenceClient("google/gemma-2-2b-it", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
-
 YOUR_TELEGRAM_ID = 1151550758
 
 def init_db():
@@ -38,7 +35,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -46,7 +43,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -76,8 +73,8 @@ def get_chat_history(user_id, limit=6):
     rows = cursor.fetchall()
     conn.close()
     history = []
-    for row in reversed(rows):
-        history.append({"role": str(row[0]), "content": str(row[1])})
+    for r, c in reversed(rows):
+        history.append({"role": str(r), "content": str(c)})
     return history
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,30 +137,36 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_ai_logic(user_id, user_text, current_mode):
     prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     save_message(user_id, "user", user_text)
-    messages = [{"role": "system", "content": prompt}, {"role": "user", "content": user_text}]
+    
+    # ПРЯМОЙ И ЖЕЛЕЗНЫЙ ЗАПРОС К МОДЕЛИ QWEN ЧЕРЕЗ API REQUESTS БЕЗ СБОЙНЫХ БИБЛИОТЕК
     try:
-        response = client.chat_completion(messages=messages, max_tokens=150)
-        answer = ""
-        if isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0:
-                answer = response['choices']['message']['content']
-            elif 'message' in response:
-                answer = response['message']['content']
-        elif isinstance(response, list) and len(response) > 0:
-            item = response
-            if isinstance(item, dict) and 'message' in item:
-                answer = item['message'].get('content', '')
+        API_URL = "https://huggingface.co"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {"inputs": f"<system>{prompt}</system><user>{user_text}</user>"}
+        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            res_data = response.json()
+            if isinstance(res_data, list) and len(res_data) > 0:
+                answer = res_data[0].get("generated_text", "")
+            elif isinstance(res_data, dict):
+                answer = res_data.get("generated_text", "")
+            else:
+                answer = str(res_data)
+                
+            # Убираем системные теги, если модель вернула их обратно
+            answer = answer.split("</user>")[-1].strip() if "</user>" in answer else answer
+            answer = answer.replace("<system>", "").replace("</system>", "").strip()
         else:
-            try: answer = response.choices.message.content
-            except:
-                try: answer = response.choices.message.content
-                except: answer = str(response)
+            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
 
-        if not answer: answer = str(response)
+        if not answer: answer = "Я задумался, боров. Повтори еще раз!"
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
         return answer
-    except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
+    except Exception as e: 
+        return f"🔴 Ошибка соединения: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
