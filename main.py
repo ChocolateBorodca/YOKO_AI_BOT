@@ -43,6 +43,8 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
+    
+    # ИСПРАВЛЕНО НАВСЕГДА: Извлекаем данные строго по индексам ячеек кортежа row
     return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
