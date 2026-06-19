@@ -6,7 +6,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
+
+# Импортируем базовые функции памяти и ИИ
 from utils import translate_to_burmalda, transcribe_audio, init_memory_db, save_message, get_chat_history
+
+# Импортируем функции управления чатами из твоего group_service.py
+from group_service import init_group_db, handle_group_chat, set_group_mode_db
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -31,11 +36,9 @@ def get_user_data(user_id):
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
-    
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row: return 1, "mellstroy"
-        return 1, row[1]  # Строго возвращаем только текстовый режим из кортежа
-        
+        return 1, (row if isinstance(row, tuple) else "mellstroy")
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -43,7 +46,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return row[0], row[1]
+    return row, row
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -71,7 +74,7 @@ class Health(BaseHTTPRequestHandler):
 async def set_default_commands(application):
     commands = [
         BotCommand("start", "Запустить бота и увидеть команды"),
-        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
+        BotCommand("profile", "👑 Твой статус (Русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
         BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (15 звезд)"),
         BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
@@ -90,8 +93,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(start_info)
 
 async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    set_user_mode(user_id, "default")
+    if update.message.chat.type in ['group', 'supergroup']:
+        set_group_mode_db(update.message.chat_id, "default")
+        await update.message.reply_text("😇 Групповой режим успешно изменен на обычный ИИ YOKO.")
+        return
+    set_user_mode(update.message.from_user.id, "default")
     await update.message.reply_text("😇 Теперь с тобой общается обычный ИИ YOKO.")
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,12 +118,15 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text("🎰 Премиумность активирована! Режим Меллстроя-Бурмалды включен! 🔥")
 
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    is_premium, _ = get_user_data(user_id)
+    if update.message.chat.type in ['group', 'supergroup']:
+        set_group_mode_db(update.message.chat_id, "mellstroy")
+        await update.message.reply_text("🎰 МЕЛЛСТРОЙ В ЧАТЕ! Включен язык Бурмалда для всей группы. 🔥")
+        return
+    is_premium, _ = get_user_data(update.message.from_user.id)
     if not is_premium:
         await update.message.reply_text("❌ Сначала нужно открыть этот режим через /buy 🎰")
         return
-    set_user_mode(user_id, "mellstroy")
+    set_user_mode(update.message.from_user.id, "mellstroy")
     await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Ч снова общаюсь на языке Бурмалда. 🎰")
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,21 +144,16 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
-        # Полностью неубиваемый разбор ответа
         answer = ""
         try:
             answer = response.choices.get('message', {}).get('content', '') if isinstance(response, dict) else response.choices.message.content
         except:
             if isinstance(response, list) and len(response) > 0:
-                item = response[0]
+                item = response
                 if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0:
-                    answer = response['choices'][0]['message'].get('content', '')
-                elif 'message' in response:
-                    answer = response['message'].get('content', '')
-        
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                elif 'message' in response: answer = response['message'].get('content', '')
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -157,16 +161,14 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ЕСЛИ ЭТО ГРУППА — полностью отдаем управление нашему group_service.py
+    if update.message.chat.type in ['group', 'supergroup']:
+        await handle_group_chat(update, context, handle_ai_logic)
+        return
+
+    # Логика для личных сообщений (ЛС)
     user_id = update.message.from_user.id
     user_text = update.message.text
-    if update.message.chat.type in ['group', 'supergroup']:
-        is_premium, current_mode = get_user_data(user_id)
-        if not is_premium:
-            await update.message.reply_text("❌ Только для Премиум пользователей.")
-            await context.bot.leave_chat(update.message.chat_id)
-            return
-        await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
-        return
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
@@ -188,6 +190,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     init_db()
+    init_group_db()
     init_memory_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
     if TELEGRAM_TOKEN:
