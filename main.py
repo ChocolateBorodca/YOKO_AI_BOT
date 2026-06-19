@@ -7,13 +7,8 @@ from telegram import Update, LabeledPrice, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, PreCheckoutQueryHandler, ContextTypes, filters
 from huggingface_hub import InferenceClient
 
-# Импортируем базовые функции памяти и ИИ
 from utils import translate_to_burmalda, transcribe_audio, init_memory_db, save_message, get_chat_history
-
-# Импортируем функции из группового сервиса
 from group_service import init_group_db, handle_group_chat, set_group_mode_db
-
-# Импортируем функции планировщика из sueta_service.py
 from sueta_service import init_sueta_db, register_group_for_sueta, random_sueta_job
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -39,9 +34,12 @@ def get_user_data(user_id):
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
+    
+    # ИСПРАВЛЕНО: Админу всегда выдается 1 (премиум), а режим берется текстом
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row: return 1, "mellstroy"
-        return 1, (row if isinstance(row, tuple) else "mellstroy")
+        return 1, row[1] if isinstance(row, tuple) else "mellstroy"
+        
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -49,7 +47,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return row, row
+    return row[0], row[1]
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -77,7 +75,7 @@ class Health(BaseHTTPRequestHandler):
 async def set_default_commands(application):
     commands = [
         BotCommand("start", "Запустить бота и увидеть команды"),
-        BotCommand("profile", "👑 Твой статус (Русский)"),
+        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
         BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (15 звезд)"),
         BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
@@ -147,16 +145,19 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # БРОНЕБОЙНЫЙ РАЗБОР ОТВЕТА ОТ HUGGING FACE
         answer = ""
         try:
-            answer = response.choices.get('message', {}).get('content', '') if isinstance(response, dict) else response.choices.message.content
+            answer = response.choices.message.content
         except:
             if isinstance(response, list) and len(response) > 0:
-                item = response
+                item = response[0]
                 if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message'].get('content', '')
                 elif 'message' in response: answer = response['message'].get('content', '')
+        
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -165,14 +166,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    
     if update.message.chat.type in ['group', 'supergroup']:
-        # Запоминаем ID этой группы в базу для будущих случайных врывов ИИ
         register_group_for_sueta(chat_id)
-        # Отдаем обработку группе
         await handle_group_chat(update, context, handle_ai_logic)
         return
-
     user_id = update.message.from_user.id
     user_text = update.message.text
     is_premium, current_mode = get_user_data(user_id)
@@ -198,8 +195,7 @@ if __name__ == '__main__':
     init_db()
     init_group_db()
     init_memory_db()
-    init_sueta_db() # Запуск базы данных для случайной суеты
-    
+    init_sueta_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -208,7 +204,7 @@ if __name__ == '__main__':
         except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
         loop.run_until_complete(set_default_commands(app))
         
-        # Автоматический запуск таймера случайных врывов Меллстроя (раз в 30 минут)
+        # Запуск планировщика (требует requirements.txt с [job-queue])
         app.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
         
         app.add_handler(CommandHandler("start", start))
