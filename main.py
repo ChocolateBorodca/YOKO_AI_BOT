@@ -32,7 +32,6 @@ def get_user_data(user_id):
     row = cursor.fetchone()
     conn.close()
     
-    # ИСПРАВЛЕНО: для создателя всегда Премиум=1, но режим берётся настоящий из базы данных
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row:
             return 1, "mellstroy"
@@ -98,13 +97,18 @@ async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        prices = [LabeledPrice("Бурмалда Premium", 1)]
+        prices = [LabeledPrice("Бурмалда Premium", 15)]
         await context.bot.send_invoice(
-            chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
-            description="Открывает Premium режим!", payload="yoko_premium_payload",
-            provider_token="", currency="XTR", prices=prices
+            chat_id=update.message.chat_id,
+            title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
+            description="Открывает Premium режим!",
+            payload="yoko_premium_payload",
+            provider_token="",
+            currency="XTR",
+            prices=prices
         )
-    except Exception as e: logging.error(f"Ошибка счета: {e}")
+    except Exception as e:
+        logging.error(f"Ошибка счета: {e}")
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
@@ -127,13 +131,25 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium, current_mode = get_user_data(user_id)
     status_str = "Активирован (Premium)" if is_premium else "Не активирован"
     mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
-    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
+    await update.message.reply_text(
+        f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}"
+    )
 
 async def handle_ai_logic(user_text, current_mode):
-    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
+    prompt = (
+        "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко."
+        if current_mode == "mellstroy"
+        else "Ты дружелюбный ИИ. Отвечай кратко."
+    )
     try:
-        response = client.chat_completion(messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_text}], max_tokens=150)
-        
+        response = client.chat_completion(
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_text}
+            ],
+            max_tokens=150
+        )
+
         answer = ""
         try:
             answer = response.choices.message.content
@@ -151,14 +167,18 @@ async def handle_ai_logic(user_text, current_mode):
         if not answer:
             answer = str(response)
 
-        if current_mode == "mellstroy": 
+        if current_mode == "mellstroy":
             answer = translate_to_burmalda(answer)
+
         return answer
-    except Exception as e: return f"🔴 Ошибка ИИ: {str(e)[:40]}"
+
+    except Exception as e:
+        return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
+
     if update.message.chat.type in ['group', 'supergroup']:
         is_premium, current_mode = get_user_data(user_id)
         if not is_premium:
@@ -167,34 +187,46 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
         return
+
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_text, current_mode))
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     is_premium, current_mode = get_user_data(user_id)
+
     if not is_premium:
         await update.message.reply_text("❌ ГС доступно только Premium пользователям.")
         return
+
     await update.message.reply_text("🎙️ Расшифровываю голосовое...")
     file = await context.bot.get_file(update.message.voice.file_id)
     audio = await file.download_as_bytearray()
+
     text = transcribe_audio(bytes(audio), HF_TOKEN)
     if not text:
         await update.message.reply_text("❌ Не удалось разобрать слова.")
         return
+
     answer = await handle_ai_logic(text, current_mode)
     await update.message.reply_text(f"💬 Вы: {text}\n\n🤖 Ответ: {answer}")
 
 if __name__ == '__main__':
     init_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
+
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
         import asyncio
-        try: loop = asyncio.get_event_loop()
-        except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+        try:
+            loop = asyncio.get_event_loop()
+        except:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         loop.run_until_complete(set_default_commands(app))
+
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
         app.add_handler(CommandHandler("buy", buy_premium))
@@ -204,4 +236,5 @@ if __name__ == '__main__':
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
         app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
         app.run_polling(drop_pending_updates=True)
