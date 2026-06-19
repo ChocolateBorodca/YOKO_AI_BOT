@@ -31,9 +31,11 @@ def get_user_data(user_id):
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
+    
     if ADMIN_ID != 0 and user_id == ADMIN_ID:
         if not row: return 1, "mellstroy"
-        return 1, (row if isinstance(row, tuple) else "mellstroy")
+        return 1, row[1]  # Строго возвращаем только текстовый режим из кортежа
+        
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -41,7 +43,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return row, row
+    return row[0], row[1]
 
 def set_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -133,15 +135,21 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        # Полностью неубиваемый разбор ответа
         answer = ""
-        try: answer = response.choices.message.content
+        try:
+            answer = response.choices.get('message', {}).get('content', '') if isinstance(response, dict) else response.choices.message.content
         except:
             if isinstance(response, list) and len(response) > 0:
-                item = response
+                item = response[0]
                 if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
-                elif 'message' in response: answer = response['message'].get('content', '')
+                if 'choices' in response and len(response['choices']) > 0:
+                    answer = response['choices'][0]['message'].get('content', '')
+                elif 'message' in response:
+                    answer = response['message'].get('content', '')
+        
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -193,6 +201,7 @@ if __name__ == '__main__':
         app.add_handler(CommandHandler("buy", buy_premium))
         app.add_handler(CommandHandler("mellstroy", cmd_mellstroy))
         app.add_handler(CommandHandler("profile", cmd_profile))
+        app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
         app.add_handler(MessageHandler(filters.VOICE, handle_voice))
