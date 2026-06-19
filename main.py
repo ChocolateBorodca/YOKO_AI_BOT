@@ -30,17 +30,13 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    if ADMIN_ID != 0 and user_id == ADMIN_ID:
+        return 1, "mellstroy"
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (user_id,))
     row = cursor.fetchone()
     conn.close()
-    
-    # ИСПРАВЛЕНО: Для админа всегда возвращаем 1 (Премиум) и чистый текстовый режим
-    if ADMIN_ID != 0 and user_id == ADMIN_ID:
-        if not row: return 1, "mellstroy"
-        return 1, str(row[1])
-        
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -78,7 +74,7 @@ async def set_default_commands(application):
         BotCommand("start", "Запустить бота и увидеть команды"),
         BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
-        BotCommand("buy", "⚡ Купить режим МЕЛЛСТРОЯ (15 звезд)"),
+        BotCommand("buy", "⚡ Купить Премиум функции (15 звезд)"),
         BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ"),
         BotCommand("find_clients", "🔍 Найти клиентов и заказы (Премиум)")
     ]
@@ -86,13 +82,13 @@ async def set_default_commands(application):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_info = (
-         "Привет я YOKO! Я ИИ бот бурмалда.\n\n"
+         "Привет я YOKO! Я ИИ бот-помощник.\n\n"
          "Вот список всех доступных команд:\n"
-         "/yoko — Обычный вежливый ИИ\n"
-         "/buy — Купить режим МЕЛЛСТРОЯ за 15 звезд\n"
-         "/mellstroy — Вернуть режим Меллстроя\n"
-         "/find_clients — Найти заказы из интернета и ТГ\n"
-         "/profile — Твой статус подписки"
+         "/yoko — Обычный вежливый ИИ (Бесплатно)\n"
+         "/buy — Открыть расширенный Премиум доступ за 15 звезд\n"
+         "/mellstroy — Вернуть режим Меллстроя (Если куплен)\n"
+         "/find_clients — ИИ-поиск актуальных заказов и клиентов из сети\n"
+         "/profile — Посмотреть свой статус подписки"
     )
     await update.message.reply_text(start_info)
 
@@ -106,11 +102,12 @@ async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        prices = [LabeledPrice("Бурмалда Premium", 15)]
+        prices = [LabeledPrice("Премиум доступ YOKO AI", 15)]
         await context.bot.send_invoice(
-            chat_id=update.message.chat_id, title="🎰 МЕЛЛСТРОЙ НА БУРМАЛДЕ",
-            description="Открывает Premium режим!", payload="yoko_premium_payload",
-            provider_token="", currency="XTR", prices=prices
+            chat_id=update.message.chat_id, 
+            title="⚡ YOKO AI — Премиум функции",
+            description="Активация расширенного ИИ-функционала: безлимитный анализ ГС, работа ИИ ассистента в группах, глубокая память диалога и модуль ИИ-поиска клиентов.", 
+            payload="yoko_premium_payload", provider_token="", currency="XTR", prices=prices
         )
     except Exception as e: logging.error(f"Ошибка счета: {e}")
 
@@ -119,7 +116,7 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_premium(update.message.from_user.id)
-    await update.message.reply_text("🎰 Премиумность активирована! Режим Меллстроя-Бурмалды включен! 🔥")
+    await update.message.reply_text("⚡ Премиум-доступ успешно активирован! Все расширенные и поисковые ИИ-функции разблокированы.")
 
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type in ['group', 'supergroup']:
@@ -128,7 +125,7 @@ async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     is_premium, _ = get_user_data(update.message.from_user.id)
     if not is_premium:
-        await update.message.reply_text("❌ Сначала нужно открыть этот режим через /buy 🎰")
+        await update.message.reply_text("❌ Сначала нужно открыть Премиум-режим через команду /buy ⚡")
         return
     set_user_mode(update.message.from_user.id, "mellstroy")
     await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Ч снова общаюсь на языке Бурмалда. 🎰")
@@ -148,25 +145,17 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     try:
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
-        # Полностью защищенный разбор любого типа ответа
         answer = ""
         if hasattr(response, 'choices') and response.choices:
-            try: answer = response.choices[0].message.content
-            except:
-                try: answer = response.choices.message.content
-                except: pass
-        
+            try: answer = response.choices.message.content
+            except: pass
         if not answer:
             if isinstance(response, list) and len(response) > 0:
-                item = response[0]
+                item = response
                 if isinstance(item, dict) and 'message' in item: answer = item['message'].get('content', '')
             elif isinstance(response, dict):
-                if 'choices' in response and len(response['choices']) > 0:
-                    answer = response['choices'][0]['message'].get('content', '')
-                elif 'message' in response:
-                    answer = response['message'].get('content', '')
-
+                if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message'].get('content', '')
+                elif 'message' in response: answer = response['message'].get('content', '')
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
@@ -175,15 +164,12 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    
     is_searching = await handle_lead_steps(update, context, client)
     if is_searching: return
-
     if update.message.chat.type in ['group', 'supergroup']:
         register_group_for_sueta(update.message.chat_id)
         await handle_group_chat(update, context, handle_ai_logic)
         return
-
     user_text = update.message.text
     is_premium, current_mode = get_user_data(user_id)
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
@@ -217,9 +203,7 @@ if __name__ == '__main__':
         try: loop = asyncio.get_event_loop()
         except: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
         loop.run_until_complete(set_default_commands(app))
-        
         app.job_queue.run_repeating(random_sueta_job, interval=1800, first=10)
-        
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("yoko", cmd_yoko))
         app.add_handler(CommandHandler("buy", buy_premium))
