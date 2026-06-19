@@ -14,8 +14,11 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 client = InferenceClient("Qwen/Qwen2.5-Coder-7B-Instruct", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 
-# Сюда жестко вписан твой ID для безлимитного Премиума
-YOUR_TELEGRAM_ID = 1151550758
+# БЕЗОПАСНО: Вытаскиваем ID админа из скрытых настроек Render
+try:
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except:
+    ADMIN_ID = 0
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -27,13 +30,16 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    if int(user_id) == YOUR_TELEGRAM_ID:
+    # Безопасное сравнение чистых чисел без путаницы с кортежами
+    if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
+        
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
     row = cursor.fetchone()
     conn.close()
+    
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -41,12 +47,13 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
+        
     return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (chat_id,))
+    cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
     return str(row[0]) if row else "default"
@@ -54,7 +61,7 @@ def get_group_mode(chat_id):
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO group_modes (chat_id, mode) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET mode=?', (chat_id, str(mode), str(mode)))
+    cursor.execute('INSERT INTO group_modes (chat_id, mode) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET mode=?', (int(chat_id), str(mode), str(mode)))
     conn.commit()
     conn.close()
 
@@ -163,10 +170,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         response = client.chat_completion(messages=messages, max_tokens=150)
         answer = ""
         if isinstance(response, dict):
-            if 'choices' in response and len(response['choices']) > 0: answer = response['choices'][0]['message']['content']
+            if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message']['content']
             elif 'message' in response: answer = response['message']['content']
         else:
-            try: answer = response.choices[0].message.content
+            try: answer = response.choices.message.content
             except: answer = str(response)
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
@@ -178,7 +185,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
     if update.message.chat.type in ['group', 'supergroup']:
-        # В группе общаются все, режим берется из базы для этой группы
         current_mode = get_group_mode(update.message.chat_id)
         await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
         return
