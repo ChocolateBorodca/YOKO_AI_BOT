@@ -8,7 +8,8 @@ from huggingface_hub import InferenceClient
 from utils import translate_to_burmalda, process_voice_message
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-client = InferenceClient("microsoft/Phi-3-mini-4k-instruct", token=HF_TOKEN)
+# ЖЕЛЕЗНЫЙ ШАНС: Переключаемся на вечно живую модель Google Gemma 2
+client = InferenceClient("google/gemma-2-2b-it", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 
 YOUR_TELEGRAM_ID = 1151550758
@@ -154,7 +155,9 @@ async def handle_ai_logic(user_id, user_text, current_mode):
                 answer = item['message'].get('content', '')
         else:
             try: answer = response.choices.message.content
-            except: answer = str(response)
+            except:
+                try: answer = response.choices.message.content
+                except: answer = str(response)
 
         if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
