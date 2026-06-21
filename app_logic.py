@@ -1,13 +1,15 @@
 import os
 import sqlite3
-import random
-import requests
 import logging
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
+from huggingface_hub import InferenceClient
 
 from utils import translate_to_burmalda, process_voice_message
 
+HF_TOKEN = os.getenv("HF_TOKEN")
+# ПОДКЛЮЧАЕМ НАПРЯМУЮ HUGGING FACE ЧЕРЕЗ ВЕЧНО ОТКРЫТУЮ МОДЕЛЬ GOOGLE
+client = InferenceClient("google/gemma-2-2b-it", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -21,6 +23,8 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
+        return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
         return 1, "mellstroy"
     conn = sqlite3.connect(DB_FILE)
@@ -31,7 +35,7 @@ def get_user_data(user_id):
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, \"default\")', (int(user_id),))
+        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (int(user_id),))
         conn.commit()
         conn.close()
         return 0, "default"
@@ -135,33 +139,35 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
-    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
-    save_message(user_id, "user", user_text)
-    
-    # Полностью рабочий публичный шлюз без ключей
-    try:
-        API_URL = "https://pollinations.ai"
-        payload = {
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_text}
-            ],
-            "model": "openai"
-        }
-        response = requests.post(API_URL, json=payload, timeout=10)
-        answer = response.text.strip() if response.status_code == 200 else ""
+    if current_mode == "mellstroy":
+        prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко, угарно."
+    else:
+        prompt = "Ты — YOKO, вежливый ИИ-помощник. Отвечай кратко, грамотно, культурно."
         
-        if not answer:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Привет! Я задумался над ответом."
-            
+    save_message(user_id, "user", user_text)
+    messages = [{"role": "system", "content": prompt}]
+    history = get_chat_history(user_id, limit=6)
+    messages.extend(history)
+    
+    try:
+        # ПРЯМОЙ ВЫЗОВ ОФИЦИАЛЬНОЙ БИБЛИОТЕКИ HUGGING FACE
+        response = client.chat_completion(messages=messages, max_tokens=150)
+        
+        answer = ""
+        if isinstance(response, dict):
+            if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message']['content']
+            elif 'message' in response: answer = response['message']['content']
+        else:
+            try: answer = response.choices.message.content
+            except: answer = str(response)
+
+        if not answer: answer = str(response)
         save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy": 
-            answer = translate_to_burmalda(answer)
+        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        return f"🔴 Ошибка ИИ: {str(e)[:30]}"
+        return f"🔴 Ошибка ИИ: {str(e)[:40]}"
 
-# ДОБАВЛЕНА НЕДОСТАЮЩАЯ ФУНКЦИЯ CHAT ДЛЯ СВЯЗКИ С MAIN.PY
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
@@ -173,4 +179,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
