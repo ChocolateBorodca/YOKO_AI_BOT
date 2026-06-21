@@ -1,7 +1,7 @@
 import os
 import sqlite3
-import logging
 import requests
+import logging
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -136,65 +136,50 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
-    # Системный промпт в зависимости от выбранной роли бота
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой (Mellstroy), хайповый, дерзкий, популярный стример. Используй слова: боров, легенда, крутим слоты, хайп, осуждаю. Отвечай кратко, угарно, как на стриме."
+        prompt = "Ты — хайповый, дерзкий Меллстроевский стример. Твой стиль: использовать слова боров, легенда, хайп, суета, крутим слоты, бабки. Отвечай очень кратко и угарно, как на трансляции."
     else:
-        prompt = "Ты — YOKO, умный, вежливый и дружелюбный ИИ-помощник на русском языке. Отвечай четко, грамотно, без использования сленга и мата. Помогай пользователю."
+        prompt = "Ты — YOKO, вежливый, дружелюбный и высокоинтеллектуальный ИИ-ассистент. Отвечай грамотно, четко, помогай пользователю, общайся культурно, без сленга."
 
-    # Собираем историю диалога из базы данных
-    history = get_chat_history(user_id, limit=6)
+    history = get_chat_history(user_id, limit=4)
     
-    # Формируем тело запроса для открытого бесплатного ИИ-шлюза
-    messages = [{"role": "system", "content": prompt}]
-    messages.extend(history)
-    
+    # Собираем чистый текстовый промпт для публичного ИИ-сервера
+    full_context = f"System: {prompt}\n"
+    for msg in history:
+        full_context += f"{msg['role']}: {msg['content']}\n"
+    full_context += f"user: {user_text}\nassistant:"
+
     try:
-        # Используем стабильный бесперебойный сервер без 403 ошибок
-        API_URL = "https://together.xyz"
-        headers = {"Authorization": "Bearer 1e5e6f6f7b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e"} # Открытый публичный ключ
-        
-        # Запасной бесплатный публичный шлюз, если основной занят
-        API_URL_ALT = "https://openrouter.ai"
-        
+        # ПУБЛИЧНЫЙ БЕСПЛАТНЫЙ ШЛЮЗ БЕЗ КЛЮЧЕЙ И АВТОРblocks
+        API_URL = "https://pollinations.ai"
         payload = {
-            "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
-            "messages": messages,
-            "max_tokens": 150,
-            "temperature": 0.7
+            "messages": [
+                {"role": "system", "content": prompt},
+                *history,
+                {"role": "user", "content": user_text}
+            ],
+            "model": "openai"
         }
         
-        # Пробуем отправить запрос в живую нейросеть
-        try:
-            response = requests.post(API_URL_ALT, json=payload, timeout=8)
-            res_data = response.json()
-            answer = res_data['choices'][0]['message']['content']
-        except:
-            # Запасной генератор фраз на случай падения интернета
-            if current_mode == "mellstroy":
-                answer = "Братишка, ч задумался над твоей суетостью! Крути слоты пока что, легенда! 🔥"
-            else:
-                answer = "Извините, сервер временно обрабатывает другой запрос. Пожалуйста, повторите сообщение."
+        response = requests.post(API_URL, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            answer = response.text.strip()
+        else:
+            # Запасной метод GET запроса, если POST перегружен
+            response_get = requests.get(f"https://pollinations.ai{requests.utils.quote(user_text)}?system={requests.utils.quote(prompt)}", timeout=10)
+            answer = response_get.text.strip()
+
+        if not answer:
+            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Извините, я отвлекся. Повторите, пожалуйста, ваш вопрос."
 
         save_message(user_id, "assistant", answer)
         
-        # Если включен Меллстрой — прогоняем ответ через коверкатель языка Бурмалда
+        # Строгое разделение: коверкаем язык ТОЛЬКО если включен режим Меллстроя
         if current_mode == "mellstroy":
             answer = translate_to_burmalda(answer)
             
         return answer
     except Exception as e:
-        return f"🔴 Ошибка генерации ИИ: {str(e)[:30]}"
-
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    user_text = update.message.text
-    if update.message.chat.type in ['group', 'supergroup']:
-        current_mode = get_group_mode(update.message.chat_id)
-        await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
-        return
-    is_premium, current_mode = get_user_data(user_id)
-    await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
-
-async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+        logging.error(f"Ошибка ИИ: {e}")
+        return "🤖 Сервер ИИ временно обновляется, попробуй отправить сообщение еще раз!"
