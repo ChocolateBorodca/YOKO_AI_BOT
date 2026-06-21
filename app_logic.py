@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import random
 import requests
 import logging
 from telegram import Update, LabeledPrice
@@ -30,11 +31,11 @@ def get_user_data(user_id):
     if not row:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, "default")', (int(user_id),))
+        cursor.execute('INSERT INTO users (user_id, is_premium, mode) VALUES (?, 0, \"default\")', (int(user_id),))
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -42,7 +43,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -134,52 +135,42 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
+    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     save_message(user_id, "user", user_text)
     
-    if current_mode == "mellstroy":
-        prompt = "Ты — хайповый, дерзкий Меллстроевский стример. Твой стиль: использовать слова боров, легенда, хайп, суета, крутим слоты, бабки. Отвечай очень кратко и угарно, как на трансляции."
-    else:
-        prompt = "Ты — YOKO, вежливый, дружелюбный и высокоинтеллектуальный ИИ-ассистент. Отвечай грамотно, четко, помогай пользователю, общайся культурно, без сленга."
-
-    history = get_chat_history(user_id, limit=4)
-    
-    # Собираем чистый текстовый промпт для публичного ИИ-сервера
-    full_context = f"System: {prompt}\n"
-    for msg in history:
-        full_context += f"{msg['role']}: {msg['content']}\n"
-    full_context += f"user: {user_text}\nassistant:"
-
+    # Полностью рабочий публичный шлюз без ключей
     try:
-        # ПУБЛИЧНЫЙ БЕСПЛАТНЫЙ ШЛЮЗ БЕЗ КЛЮЧЕЙ И АВТОРblocks
         API_URL = "https://pollinations.ai"
         payload = {
             "messages": [
                 {"role": "system", "content": prompt},
-                *history,
                 {"role": "user", "content": user_text}
             ],
             "model": "openai"
         }
-        
         response = requests.post(API_URL, json=payload, timeout=10)
+        answer = response.text.strip() if response.status_code == 200 else ""
         
-        if response.status_code == 200:
-            answer = response.text.strip()
-        else:
-            # Запасной метод GET запроса, если POST перегружен
-            response_get = requests.get(f"https://pollinations.ai{requests.utils.quote(user_text)}?system={requests.utils.quote(prompt)}", timeout=10)
-            answer = response_get.text.strip()
-
         if not answer:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Извините, я отвлекся. Повторите, пожалуйста, ваш вопрос."
-
-        save_message(user_id, "assistant", answer)
-        
-        # Строгое разделение: коверкаем язык ТОЛЬКО если включен режим Меллстроя
-        if current_mode == "mellstroy":
-            answer = translate_to_burmalda(answer)
+            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Привет! Я задумался над ответом."
             
+        save_message(user_id, "assistant", answer)
+        if current_mode == "mellstroy": 
+            answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        logging.error(f"Ошибка ИИ: {e}")
-        return "🤖 Сервер ИИ временно обновляется, попробуй отправить сообщение еще раз!"
+        return f"🔴 Ошибка ИИ: {str(e)[:30]}"
+
+# ДОБАВЛЕНА НЕДОСТАЮЩАЯ ФУНКЦИЯ CHAT ДЛЯ СВЯЗКИ С MAIN.PY
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    user_text = update.message.text
+    if update.message.chat.type in ['group', 'supergroup']:
+        current_mode = get_group_mode(update.message.chat_id)
+        await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
+        return
+    is_premium, current_mode = get_user_data(user_id)
+    await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
+
+async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
