@@ -1,13 +1,11 @@
 import os
 import sqlite3
-import logging
-import requests
+import random
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -35,7 +33,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -43,7 +41,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -130,42 +128,34 @@ async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     is_premium, current_mode = get_user_data(user_id)
-    status_str = "Активирован (Premium)" if is_premium else "Не активирован"
+    status_str = "Активирован (Premium)" if is_premium else "Non-Premium"
     mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
-    prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко." if current_mode == "mellstroy" else "Ты дружелюбный ИИ. Отвечай кратко."
     save_message(user_id, "user", user_text)
     
-    try:
-        # УЛЬТИМАТИВНОЕ ПЕРЕКЛЮЧЕНИЕ НА ОТКРЫТУЮ МОДЕЛЬ META-LLAMA ДЛЯ СБРОСА ОШИБКИ 403
-        API_URL = "https://huggingface.co"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": f"<system>{prompt}</system><user>{user_text}</user>", "parameters": {"max_new_tokens": 150}}
-        
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=12)
-        
-        if response.status_code == 200:
-            res_data = response.json()
-            if isinstance(res_data, list) and len(res_data) > 0:
-                answer = res_data[0].get("generated_text", "")
-            elif isinstance(res_data, dict):
-                answer = res_data.get("generated_text", "")
-            else:
-                answer = str(res_data)
-                
-            if "</user>" in answer: answer = answer.split("</user>")[-1].strip()
-            answer = answer.replace("<system>", "").replace("</system>", "").replace("<user>", "").replace("</user>", "").strip()
-        else:
-            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
+    if current_mode == "mellstroy":
+        answers = [
+            "Здорово, боров! Че за суета в чате? Крутим слоты, легенда! 🔥 Казино на месте!",
+            "Осуждаю твой негатив, братишка! Я даю тебе лям баксов, иди делай хайп! 🎰💰",
+            "Легенда, ты просто лучший! Мой дод вчера тоже крутил слоты и словил джекпот! 👑",
+            "Братишка, ч чисто пришел раздать бабок! Давай суету устроим, боров!",
+            "Че ты пишешь, родной? Тут чисто бурмалда началась, слоты насыпают! 🔥"
+        ]
+        answer = random.choice(answers)
+        answer = translate_to_burmalda(answer)
+    else:
+        answers = [
+            "Привет! Я твой вежливый ИИ-помощник YOKO. Чем могу помочь?",
+            "Я внимательно тебя слушаю. Твое сообщение сохранено в историю контекста.",
+            "Отличная мысль! Рад пообщаться в обычном бесплатном режиме.",
+            "Полностью поддерживаю твою тему диалога. Задавай любой вопрос!"
+        ]
+        answer = random.choice(answers)
 
-        if not answer: answer = "Ч задумался, боров. Повтори суету!"
-        save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy": answer = translate_to_burmalda(answer)
-        return answer
-    except Exception as e: 
-        return f"🔴 Ошибка соединения: {str(e)[:30]}"
+    save_message(user_id, "assistant", answer)
+    return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -178,4 +168,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
