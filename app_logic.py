@@ -8,10 +8,13 @@ from huggingface_hub import InferenceClient
 from utils import translate_to_burmalda, process_voice_message
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-# ПОДКЛЮЧАЕМ НАПРЯМУЮ HUGGING FACE ЧЕРЕЗ ВЕЧНО ОТКРЫТУЮ МОДЕЛЬ GOOGLE
 client = InferenceClient("google/gemma-2-2b-it", token=HF_TOKEN)
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
+
+# ИСПРАВЛЕНО: Объявляем ADMIN_ID прямо здесь, чтобы убрать зависание кода
+try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except: ADMIN_ID = 0
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -23,10 +26,12 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    # Жесткая и надежная проверка админа по двум параметрам без сбоев
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
         return 1, "mellstroy"
+        
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
@@ -140,7 +145,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_ai_logic(user_id, user_text, current_mode):
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, легенда, крутим слоты. Отвечай кратко, угарно."
+        prompt = "Ты — Меллстрой. Твой стиль: хайповый, дерзкий. Используй: боров, legenda, крутим слоты. Отвечай кратко, угарно."
     else:
         prompt = "Ты — YOKO, вежливый ИИ-помощник. Отвечай кратко, грамотно, культурно."
         
@@ -150,9 +155,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.extend(history)
     
     try:
-        # ПРЯМОЙ ВЫЗОВ ОФИЦИАЛЬНОЙ БИБЛИОТЕКИ HUGGING FACE
         response = client.chat_completion(messages=messages, max_tokens=150)
-        
         answer = ""
         if isinstance(response, dict):
             if 'choices' in response and len(response['choices']) > 0: answer = response['choices']['message']['content']
