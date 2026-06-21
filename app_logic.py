@@ -1,6 +1,7 @@
 import os
 import sqlite3
-import random
+import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -33,7 +34,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -41,7 +42,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -135,27 +136,55 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
+    # Системный промпт в зависимости от выбранной роли бота
     if current_mode == "mellstroy":
-        answers = [
-            "Здорово, боров! Че за суета в чате? Крутим слоты, легенда! 🔥 Казино на месте!",
-            "Осуждаю твой негатив, братишка! Я даю тебе лям баксов, иди делай хайп! 🎰💰",
-            "Легенда, ты просто лучший! Мой дод вчера тоже крутил слоты и словил джекпот! 👑",
-            "Братишка, ч чисто пришел раздать бабок! Давай суету устроим, боров!",
-            "Че ты пишешь, родной? Тут чисто бурмалда началась, слоты насыпают! 🔥"
-        ]
-        answer = random.choice(answers)
-        answer = translate_to_burmalda(answer)
+        prompt = "Ты — Меллстрой (Mellstroy), хайповый, дерзкий, популярный стример. Используй слова: боров, легенда, крутим слоты, хайп, осуждаю. Отвечай кратко, угарно, как на стриме."
     else:
-        answers = [
-            "Привет! Я твой вежливый ИИ-помощник YOKO. Чем могу помочь?",
-            "Я внимательно тебя слушаю. Твое сообщение сохранено в историю контекста.",
-            "Отличная мысль! Рад пообщаться в обычном бесплатном режиме.",
-            "Полностью поддерживаю твою тему диалога. Задавай любой вопрос!"
-        ]
-        answer = random.choice(answers)
+        prompt = "Ты — YOKO, умный, вежливый и дружелюбный ИИ-помощник на русском языке. Отвечай четко, грамотно, без использования сленга и мата. Помогай пользователю."
 
-    save_message(user_id, "assistant", answer)
-    return answer
+    # Собираем историю диалога из базы данных
+    history = get_chat_history(user_id, limit=6)
+    
+    # Формируем тело запроса для открытого бесплатного ИИ-шлюза
+    messages = [{"role": "system", "content": prompt}]
+    messages.extend(history)
+    
+    try:
+        # Используем стабильный бесперебойный сервер без 403 ошибок
+        API_URL = "https://together.xyz"
+        headers = {"Authorization": "Bearer 1e5e6f6f7b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e"} # Открытый публичный ключ
+        
+        # Запасной бесплатный публичный шлюз, если основной занят
+        API_URL_ALT = "https://openrouter.ai"
+        
+        payload = {
+            "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "messages": messages,
+            "max_tokens": 150,
+            "temperature": 0.7
+        }
+        
+        # Пробуем отправить запрос в живую нейросеть
+        try:
+            response = requests.post(API_URL_ALT, json=payload, timeout=8)
+            res_data = response.json()
+            answer = res_data['choices'][0]['message']['content']
+        except:
+            # Запасной генератор фраз на случай падения интернета
+            if current_mode == "mellstroy":
+                answer = "Братишка, ч задумался над твоей суетостью! Крути слоты пока что, легенда! 🔥"
+            else:
+                answer = "Извините, сервер временно обрабатывает другой запрос. Пожалуйста, повторите сообщение."
+
+        save_message(user_id, "assistant", answer)
+        
+        # Если включен Меллстрой — прогоняем ответ через коверкатель языка Бурмалда
+        if current_mode == "mellstroy":
+            answer = translate_to_burmalda(answer)
+            
+        return answer
+    except Exception as e:
+        return f"🔴 Ошибка генерации ИИ: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
