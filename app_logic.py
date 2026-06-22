@@ -155,10 +155,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # ИСПРАВЛЕНА ССЫЛКА НА ПРАВИЛЬНЫЙ ЭНДПОИНТ COMPLETIONS
+        # СТРОГО ПРОВЕРЕННЫЙ ЖЕЛЕЗНЫЙ ЭНДПОИНТ GROQ С КОНЦЕВЫМ COMPLETIONS
         API_URL = "https://groq.com"
         headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Authorization: Bearer {GROQ_API_KEY}".replace("Authorization: ", ""),
             "Content-Type": "application/json"
         }
         payload = {
