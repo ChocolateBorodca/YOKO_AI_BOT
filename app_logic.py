@@ -39,7 +39,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -47,7 +47,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -148,31 +148,33 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    # СТРОГИЙ И ЖИВОЙ ЗАПРОС К СЕРВЕРУ БЕЗ СКРЫТЫХ ТЕКСТОВЫХ ЗАГЛУШЕК
-    API_URL = "https://pollinations.ai"
-    payload = {
-        "messages": [
-            {"role": "system", "content": prompt},
-            *history,
-            {"role": "user", "content": user_text}
-        ],
-        "model": "llama"
-    }
-    
-    response = requests.post(API_URL, json=payload, timeout=12)
-    
-    if response.status_code == 200:
-        answer = response.text.strip()
-    else:
-        answer = f"Ошибка ИИ (Статус-код: {response.status_code})"
+    context_str = ""
+    for msg in history:
+        context_str += f"{msg['role']}: {msg['content']}\n"
 
-    if not answer:
-        answer = "Нейросеть вернула пустой ответ. Повтори запрос!"
+    try:
+        # ИСПРАВЛЕНО НА СТАБИЛЬНЫЙ GET ЗАПРОС ДЛЯ СБРОСА ОШИБКИ 405
+        clean_text = requests.utils.quote(user_text)
+        clean_prompt = requests.utils.quote(f"System instruction: {prompt}\nPrevious history:\n{context_str}")
+        
+        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=llama"
+        
+        response = requests.get(API_URL, timeout=12)
+        
+        if response.status_code == 200:
+            answer = response.text.strip()
+        else:
+            answer = f"Ошибка ИИ (Статус-код: {response.status_code})"
 
-    save_message(user_id, "assistant", answer)
-    if current_mode == "mellstroy": 
-        answer = translate_to_burmalda(answer)
-    return answer
+        if not answer:
+            answer = "Нейросеть вернула пустой ответ. Повтори запрос!"
+
+        save_message(user_id, "assistant", answer)
+        if current_mode == "mellstroy": 
+            answer = translate_to_burmalda(answer)
+        return answer
+    except Exception as e:
+        return f"🔴 Ошибка соединения: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
