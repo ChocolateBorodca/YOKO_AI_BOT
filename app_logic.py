@@ -1,7 +1,7 @@
 import os
 import sqlite3
-import logging
 import requests
+import logging
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -39,7 +39,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -47,7 +47,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -148,30 +148,31 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    try:
-        # СВЕРХНАДЕЖНЫЙ ШЛЮЗ ЧЕРЕЗ АНОНИМНЫЙ РАБОЧИЙ API DUCKDUCKGO
-        API_URL = "https://pollinations.ai"
-        payload = {
-            "messages": [
-                {"role": "system", "content": prompt},
-                *history,
-                {"role": "user", "content": user_text}
-            ],
-            "model": "llama" # Принудительно переключаем на стабильный бесплатный движок Llama 3
-        }
-        
-        response = requests.post(API_URL, json=payload, timeout=12)
-        answer = response.text.strip() if response.status_code == 200 else ""
-        
-        if not answer:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+    # СТРОГИЙ И ЖИВОЙ ЗАПРОС К СЕРВЕРУ БЕЗ СКРЫТЫХ ТЕКСТОВЫХ ЗАГЛУШЕК
+    API_URL = "https://pollinations.ai"
+    payload = {
+        "messages": [
+            {"role": "system", "content": prompt},
+            *history,
+            {"role": "user", "content": user_text}
+        ],
+        "model": "llama"
+    }
+    
+    response = requests.post(API_URL, json=payload, timeout=12)
+    
+    if response.status_code == 200:
+        answer = response.text.strip()
+    else:
+        answer = f"Ошибка ИИ (Статус-код: {response.status_code})"
 
-        save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy": 
-            answer = translate_to_burmalda(answer)
-        return answer
-    except Exception as e:
-        return f"🔴 Ошибка ИИ: {str(e)[:30]}"
+    if not answer:
+        answer = "Нейросеть вернула пустой ответ. Повтори запрос!"
+
+    save_message(user_id, "assistant", answer)
+    if current_mode == "mellstroy": 
+        answer = translate_to_burmalda(answer)
+    return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
