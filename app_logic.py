@@ -1,13 +1,13 @@
 import os
 import sqlite3
-import random
-import requests
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
+HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -28,7 +28,6 @@ def get_user_data(user_id):
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
         return 1, "mellstroy"
-        
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT is_premium, mode FROM users WHERE user_id = ?', (int(user_id),))
@@ -41,7 +40,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -49,7 +48,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -80,7 +79,7 @@ def get_chat_history(user_id, limit=6):
     conn.close()
     history = []
     for r, c in reversed(rows):
-        history.append({"role": str(r), "content": str(c)})
+        history.append({"role": "user" if str(r) == "user" else "assistant", "content": str(c)})
     return history
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,24 +149,33 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    # СВЕРХНАДЕЖНЫЙ СЕРВЕР БЕЗ КЛЮЧЕЙ И ЛИМИТОВ НА HUGGING FACE
-    try:
-        API_URL = "https://pollinations.ai"
-        payload = {
-            "messages": [
-                {"role": "system", "content": prompt},
-                *history
-            ],
-            "model": "openai"
-        }
-        
-        response = requests.post(API_URL, json=payload, timeout=10)
-        if response.status_code == 200:
-            answer = response.text.strip()
-        else:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+    # Формируем тело запроса по стандартам Hugging Face Chat Templates
+    formatted_messages = [{"role": "system", "content": prompt}]
+    formatted_messages.extend(history)
+    formatted_messages.append({"role": "user", "content": user_text})
 
-        if not answer: 
+    try:
+        # НАПРЯМУЮ К СЕРВЕРАМ HUGGING FACE БЕЗ СБОЙНЫХ БИБЛИОТЕК
+        API_URL = "https://huggingface.co"
+        headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
+        payload = {"inputs": user_text, "parameters": {"max_new_tokens": 150}, "context": prompt}
+        
+        response = requests.post(API_URL, headers=headers, json={"inputs": f"System: {prompt}\nContext: {history}\nUser: {user_text}\nAssistant:"}, timeout=10)
+        
+        answer = ""
+        if response.status_code == 200:
+            res_data = response.json()
+            if isinstance(res_data, list) and len(res_data) > 0:
+                answer = res_data[0].get("generated_text", "")
+            elif isinstance(res_data, dict):
+                answer = res_data.get("generated_text", "")
+            
+            if "Assistant:" in answer:
+                answer = answer.split("Assistant:")[-1].strip()
+        else:
+            answer = f"🔴 Ошибка сервера Hugging Face (Код {response.status_code}). Проверь новый токен в Render!"
+
+        if not answer:
             answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
         save_message(user_id, "assistant", answer)
@@ -175,8 +183,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        logging.error(f"Ошибка ИИ: {e}")
-        return "🤖 Сервер ИИ временно занят, повтори сообщение еще раз!"
+        return f"🔴 Ошибка соединения: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
