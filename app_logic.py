@@ -1,13 +1,13 @@
 import os
 import sqlite3
-import logging
+import random
 import requests
+import logging
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -40,7 +40,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -48,7 +48,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -143,40 +143,35 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, популярный, хайповый и очень дерзкий стример. Общайся эмоционально, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай очень кратко, буквально в одно-два предложения."
+        prompt = "Ты — Меллстрой, хайповый, дерзкий стример. Говори кратко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай угарно и кратко в 1-2 предложения."
     else:
-        prompt = "Ты — YOKO, высокоинтеллектуальный, вежливый и дружелюбный ИИ-помощник. Отвечай кратко, помогай пользователю, общайся культурно, без мата и сленга."
+        prompt = "Ты — умный, вежливый и дружелюбный ИИ-помощник YOKO. Отвечай кратко, грамотно, культурно, помогай пользователю."
         
     history = get_chat_history(user_id, limit=4)
     
-    # Конструируем чистый промпт контекста по стандартам Zephyr
-    full_input = f"<|system|>\n{prompt}</s>\n"
-    for msg in history:
-        full_input += f"<|{msg['role']}|>\n{msg['content']}</s>\n"
-    full_input += f"<|user|>\n{user_text}</s>\n<|assistant|>\n"
+    # Конструируем тело запроса для открытого анонимного ИИ шлюза
+    formatted_messages = [{"role": "system", "content": prompt}]
+    formatted_messages.extend(history)
+    formatted_messages.append({"role": "user", "content": user_text})
 
     try:
-        # СТАБИЛЬНЫЙ ОТКРЫТЫЙ ПУБЛИЧНЫЙ ШЛЮЗ ZEPHYR БЕЗ БЛОКИРОВОК 403
-        API_URL = "https://huggingface.co"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": full_input, "parameters": {"max_new_tokens": 120, "temperature": 0.7}}
+        # СВЕРХСТАБИЛЬНЫЙ ОТКРЫТЫЙ СЕРВЕР БЕЗ ЛИЦЕНЗИЙ, КЛЮЧЕЙ И ГЕО-БЛОКИРОВОК
+        API_URL = "https://pollinations.ai"
+        payload = {
+            "messages": formatted_messages,
+            "model": "mistral-nemo", # Переключаемся на мощную открытую модель Mistral
+            "jsonMode": False
+        }
         
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=12)
+        response = requests.post(API_URL, json=payload, timeout=12)
         answer = ""
         
         if response.status_code == 200:
-            res_data = response.json()
-            if isinstance(res_data, list) and len(res_data) > 0:
-                answer = res_data[0].get("generated_text", "")
-            elif isinstance(res_data, dict):
-                answer = res_data.get("generated_text", "")
-                
-            if "<|assistant|>" in answer:
-                answer = answer.split("<|assistant|>")[-1].replace("</s>", "").strip()
+            answer = response.text.strip()
         else:
-            answer = f"Ошибка ИИ (Статус {response.status_code})."
+            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
-        if not answer or "Ошибка ИИ" in answer:
+        if not answer:
             answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
         save_message(user_id, "assistant", answer)
@@ -184,7 +179,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        return f"🔴 Ошибка соединения: {str(e)[:30]}"
+        return f"🔴 Ошибка связи с ИИ: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -197,4 +192,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
