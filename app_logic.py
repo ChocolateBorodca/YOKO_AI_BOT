@@ -1,12 +1,13 @@
 import os
 import sqlite3
-import requests
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
+HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -142,35 +143,38 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый, дерзкий стример. Говори кратко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай угарно в 1-2 предложения."
     else:
-        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без мата и сленга, помогай пользователю."
+        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга."
         
     history = get_chat_history(user_id, limit=4)
     
-    context_str = ""
-    for msg in history:
-        context_str += f"{msg['role']}: {msg['content']}\n"
-
     try:
-        # ИСПРАВЛЕНО НА СТАБИЛЬНЫЙ GET ЗАПРОС ДЛЯ СБРОСА ОШИБКИ 405
-        clean_text = requests.utils.quote(user_text)
-        clean_prompt = requests.utils.quote(f"System instruction: {prompt}\nPrevious history:\n{context_str}")
+        API_URL = "https://huggingface.co"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         
-        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=llama"
+        payload = {
+            "inputs": f"System: {prompt}\nContext: {history}\nUser: {user_text}\nAssistant:",
+            "parameters": {"max_new_tokens": 120, "temperature": 0.7}
+        }
         
-        response = requests.get(API_URL, timeout=12)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=12)
+        answer = ""
         
         if response.status_code == 200:
-            answer = response.text.strip()
+            res_data = response.json()
+            if isinstance(res_data, list) and len(res_data) > 0:
+                answer = res_data[0].get("generated_text", "")
+            elif isinstance(res_data, dict):
+                answer = res_data.get("generated_text", "")
+                
+            if "Assistant:" in answer:
+                answer = answer.split("Assistant:")[-1].strip()
         else:
-            answer = f"Ошибка ИИ (Статус-код: {response.status_code})"
-
-        if not answer:
-            answer = "Нейросеть вернула пустой ответ. Повтори запрос!"
+            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
 
         save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy": 
+        if current_mode == "mellstroy" and "🔴" not in answer: 
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
@@ -187,4 +191,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
