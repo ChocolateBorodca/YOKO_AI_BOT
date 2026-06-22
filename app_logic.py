@@ -143,7 +143,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -155,10 +155,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # СТРОГО ПРОВЕРЕННЫЙ ЖЕЛЕЗНЫЙ ЭНДПОИНТ GROQ С КОНЦЕВЫМ COMPLETIONS
+        # АБСОЛЮТНО ЧИСТЫЙ И ИСПРАВЛЕННЫЙ ЗАПРОС К API GROQ
         API_URL = "https://groq.com"
         headers = {
-            "Authorization": f"Authorization: Bearer {GROQ_API_KEY}".replace("Authorization: ", ""),
+            "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json"
         }
         payload = {
