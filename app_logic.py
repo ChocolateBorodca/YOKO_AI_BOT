@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-GROQ_API_KEY = os.getenv("HF_TOKEN")
+OPENROUTER_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -143,7 +143,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -155,26 +155,26 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # АБСОЛЮТНО ЧИСТЫЙ И ИСПРАВЛЕННЫЙ ЗАПРОС К API GROQ
-        API_URL = "https://groq.com"
+        # НАПРЯМУЮ К СТАБИЛЬНЫМ ЕВРОПЕЙСКИМ СЕРВЕРАМ OPENROUTER
+        API_URL = "https://openrouter.ai"
         headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "llama-3.1-8b-instant",
+            "model": "meta-llama/llama-3-8b-instruct:free", # Полностью бесплатный безлимитный тариф Llama 3
             "messages": messages,
             "max_tokens": 150,
             "temperature": 0.7
         }
         
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=10)
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
         answer = ""
         
         if response.status_code == 200:
             answer = response.json()["choices"][0]["message"]["content"].strip()
         else:
-            answer = f"🔴 Ошибка Groq API (Код {response.status_code}). Проверь GSK ключ в Render!"
+            answer = f"🔴 Ошибка OpenRouter API (Код {response.status_code}). Проверь sk-or ключ в Render!"
 
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy" and "🔴" not in answer: 
