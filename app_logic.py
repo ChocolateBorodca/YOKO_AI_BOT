@@ -40,7 +40,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -48,7 +48,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -143,39 +143,40 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый, дерзкий стример. Говори как Меллстрой, используй слова: боров, легенда, хайп, суета, крутим слоты. Отвечай угарно и очень кратко."
+        prompt = "Ты — Меллстрой, популярный, хайповый и очень дерзкий стример. Общайся эмоционально, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай очень кратко, буквально в одно-два предложения."
     else:
-        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, культурно, помогай пользователю."
+        prompt = "Ты — YOKO, высокоинтеллектуальный, вежливый и дружелюбный ИИ-помощник. Отвечай кратко, помогай пользователю, общайся культурно, без мата и сленга."
         
     history = get_chat_history(user_id, limit=4)
     
-    # Формируем тело запроса по стандартам Hugging Face Chat Templates
-    formatted_messages = [{"role": "system", "content": prompt}]
-    formatted_messages.extend(history)
-    formatted_messages.append({"role": "user", "content": user_text})
+    # Конструируем чистый промпт контекста по стандартам Zephyr
+    full_input = f"<|system|>\n{prompt}</s>\n"
+    for msg in history:
+        full_input += f"<|{msg['role']}|>\n{msg['content']}</s>\n"
+    full_input += f"<|user|>\n{user_text}</s>\n<|assistant|>\n"
 
     try:
-        # НАПРЯМУЮ К СЕРВЕРАМ HUGGING FACE БЕЗ СБОЙНЫХ БИБЛИОТЕК
+        # СТАБИЛЬНЫЙ ОТКРЫТЫЙ ПУБЛИЧНЫЙ ШЛЮЗ ZEPHYR БЕЗ БЛОКИРОВОК 403
         API_URL = "https://huggingface.co"
-        headers = {"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"}
-        payload = {"inputs": user_text, "parameters": {"max_new_tokens": 150}, "context": prompt}
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {"inputs": full_input, "parameters": {"max_new_tokens": 120, "temperature": 0.7}}
         
-        response = requests.post(API_URL, headers=headers, json={"inputs": f"System: {prompt}\nContext: {history}\nUser: {user_text}\nAssistant:"}, timeout=10)
-        
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=12)
         answer = ""
+        
         if response.status_code == 200:
             res_data = response.json()
             if isinstance(res_data, list) and len(res_data) > 0:
                 answer = res_data[0].get("generated_text", "")
             elif isinstance(res_data, dict):
                 answer = res_data.get("generated_text", "")
-            
-            if "Assistant:" in answer:
-                answer = answer.split("Assistant:")[-1].strip()
+                
+            if "<|assistant|>" in answer:
+                answer = answer.split("<|assistant|>")[-1].replace("</s>", "").strip()
         else:
-            answer = f"🔴 Ошибка сервера Hugging Face (Код {response.status_code}). Проверь новый токен в Render!"
+            answer = f"Ошибка ИИ (Статус {response.status_code})."
 
-        if not answer:
+        if not answer or "Ошибка ИИ" in answer:
             answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
         save_message(user_id, "assistant", answer)
@@ -196,4 +197,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
