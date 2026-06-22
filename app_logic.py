@@ -7,7 +7,8 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-HF_TOKEN = os.getenv("HF_TOKEN")
+# Используем переменную HF_TOKEN, куда ты вставил ключ Groq GSK
+GROQ_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -143,44 +144,42 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
-        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга."
+        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
     history = get_chat_history(user_id, limit=4)
     
-    # Формируем чистый промпт по стандартам Zephyr
-    full_input = f"<|system|>\n{prompt}</s>\n"
+    # Конструируем тело запроса по официальным стандартам OpenAI / Groq
+    messages = [{"role": "system", "content": prompt}]
     for msg in history:
-        full_input += f"<|{msg['role']}|>\n{msg['content']}</s>\n"
-    full_input += f"<|user|>\n{user_text}</s>\n<|assistant|>\n"
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_text})
 
     try:
-        # НАПРЯМУЮ К ОФИЦИАЛЬНОЙ СТАБИЛЬНОЙ МОДЕЛИ С НОВЫМ ТОКЕНОМ С РЕНДЕРА
-        API_URL = "https://huggingface.co"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        payload = {"inputs": full_input, "parameters": {"max_new_tokens": 120, "temperature": 0.7}}
+        # НАПРЯМУЮ К ОФИЦИАЛЬНЫМ УЛЬТРА-СКОРОСТНЫМ СЕРВЕРАМ GROQ
+        API_URL = "https://groq.com"
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": messages,
+            "max_tokens": 150,
+            "temperature": 0.7
+        }
         
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=10)
         answer = ""
         
         if response.status_code == 200:
-            res_data = response.json()
-            if isinstance(res_data, list) and len(res_data) > 0:
-                answer = res_data.get("generated_text", "")
-            elif isinstance(res_data, dict):
-                answer = res_data.get("generated_text", "")
-                
-            if "<|assistant|>" in answer:
-                answer = answer.split("<|assistant|>")[-1].replace("</s>", "").strip()
+            answer = response.json()["choices"][0]["message"]["content"].strip()
         else:
-            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
-
-        if not answer or "Ошибка ИИ" in answer:
-            answer = "Я задумался, боров. Повтори запрос!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+            answer = f"🔴 Ошибка Groq API (Код {response.status_code}). Проверь GSK ключ в Render!"
 
         save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy" and "Я задумался" not in answer: 
+        if current_mode == "mellstroy" and "🔴" not in answer: 
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
@@ -197,4 +196,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
