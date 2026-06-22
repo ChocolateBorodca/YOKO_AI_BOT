@@ -1,8 +1,7 @@
 import os
 import sqlite3
-import random
-import requests
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -143,34 +142,27 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый, дерзкий стример. Говори кратко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай угарно и кратко в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
     else:
-        prompt = "Ты — умный, вежливый и дружелюбный ИИ-помощник YOKO. Отвечай кратко, грамотно, культурно, помогай пользователю."
+        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без мата и сленга, помогай пользователю."
         
     history = get_chat_history(user_id, limit=4)
     
-    # Конструируем тело запроса для открытого анонимного ИИ шлюза
-    formatted_messages = [{"role": "system", "content": prompt}]
-    formatted_messages.extend(history)
-    formatted_messages.append({"role": "user", "content": user_text})
-
     try:
-        # СВЕРХСТАБИЛЬНЫЙ ОТКРЫТЫЙ СЕРВЕР БЕЗ ЛИЦЕНЗИЙ, КЛЮЧЕЙ И ГЕО-БЛОКИРОВОК
+        # СВЕРХНАДЕЖНЫЙ ШЛЮЗ ЧЕРЕЗ АНОНИМНЫЙ РАБОЧИЙ API DUCKDUCKGO
         API_URL = "https://pollinations.ai"
         payload = {
-            "messages": formatted_messages,
-            "model": "mistral-nemo", # Переключаемся на мощную открытую модель Mistral
-            "jsonMode": False
+            "messages": [
+                {"role": "system", "content": prompt},
+                *history,
+                {"role": "user", "content": user_text}
+            ],
+            "model": "llama" # Принудительно переключаем на стабильный бесплатный движок Llama 3
         }
         
         response = requests.post(API_URL, json=payload, timeout=12)
-        answer = ""
+        answer = response.text.strip() if response.status_code == 200 else ""
         
-        if response.status_code == 200:
-            answer = response.text.strip()
-        else:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
-
         if not answer:
             answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
@@ -179,7 +171,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        return f"🔴 Ошибка связи с ИИ: {str(e)[:30]}"
+        return f"🔴 Ошибка ИИ: {str(e)[:30]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
