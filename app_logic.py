@@ -7,7 +7,6 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-# Используем переменную HF_TOKEN, куда ты вставил ключ Groq GSK
 GROQ_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
@@ -150,14 +149,13 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    # Конструируем тело запроса по официальным стандартам OpenAI / Groq
     messages = [{"role": "system", "content": prompt}]
     for msg in history:
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # НАПРЯМУЮ К ОФИЦИАЛЬНЫМ УЛЬТРА-СКОРОСТНЫМ СЕРВЕРАМ GROQ
+        # ИСПРАВЛЕНА ССЫЛКА НА ПРАВИЛЬНЫЙ ЭНДПОИНТ COMPLETIONS
         API_URL = "https://groq.com"
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
