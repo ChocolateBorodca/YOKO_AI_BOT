@@ -155,14 +155,18 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # НАПРЯМУЮ К СТАБИЛЬНЫМ ЕВРОПЕЙСКИМ СЕРВЕРАМ OPENROUTER
         API_URL = "https://openrouter.ai"
+        
+        # ИСПРАВЛЕНО: Добавлены два обязательных сетевых заголовка для пробития ошибки 405
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://render.com",
+            "X-Title": "YokoTelegramBot"
         }
+        
         payload = {
-            "model": "meta-llama/llama-3-8b-instruct:free", # Полностью бесплатный безлимитный тариф Llama 3
+            "model": "meta-llama/llama-3-8b-instruct:free",
             "messages": messages,
             "max_tokens": 150,
             "temperature": 0.7
