@@ -156,8 +156,6 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
     try:
         API_URL = "https://openrouter.ai"
-        
-        # ИСПРАВЛЕНО: Добавлены два обязательных сетевых заголовка для пробития ошибки 405
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
@@ -166,7 +164,8 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         }
         
         payload = {
-            "model": "meta-llama/llama-3-8b-instruct:free",
+            # ИСПРАВЛЕНО: Переключаемся на безотказную бесплатную модель Google Gemini через шлюз OpenRouter
+            "model": "google/gemini-2.5-flash:free",
             "messages": messages,
             "max_tokens": 150,
             "temperature": 0.7
@@ -176,9 +175,9 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         answer = ""
         
         if response.status_code == 200:
-            answer = response.json()["choices"][0]["message"]["content"].strip()
+            answer = response.json()["choices"]["message"]["content"].strip()
         else:
-            answer = f"🔴 Ошибка OpenRouter API (Код {response.status_code}). Проверь sk-or ключ в Render!"
+            answer = f"🔴 Ошибка OpenRouter API (Код {response.status_code})."
 
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy" and "🔴" not in answer: 
