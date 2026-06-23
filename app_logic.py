@@ -164,8 +164,8 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         }
         
         payload = {
-            # ИСПРАВЛЕНО: Переключаемся на безотказную бесплатную модель Google Gemini через шлюз OpenRouter
-            "model": "google/gemini-2.5-flash:free",
+            # ВКЛЮЧАЕМ СВОБОДНУЮ МОДЕЛЬ IBM GRANITE БЕЗ НАПЛЫВА ОЧЕРЕДЕЙ ПОЛЬЗОВАТЕЛЕЙ
+            "model": "ibm/granite-3.1-8b-instruct:free",
             "messages": messages,
             "max_tokens": 150,
             "temperature": 0.7
