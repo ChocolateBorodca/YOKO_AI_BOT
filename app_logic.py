@@ -7,6 +7,8 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
+# Используем переменную HF_TOKEN, в которую ты вставил оригинальный ключ DeepSeek sk-...
+DEEPSEEK_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -142,32 +144,38 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 sentences."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
     history = get_chat_history(user_id, limit=4)
     
-    context_str = ""
+    messages = [{"role": "system", "content": prompt}]
     for msg in history:
-        context_str += f"{msg['role']}: {msg['content']}\n"
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_text})
 
     try:
-        # ЖЕЛЕЗОБЕТОННЫЙ СТАБИЛЬНЫЙ GET-ЗАПРОС В ОБХОД ОШИБОК 405
-        clean_text = requests.utils.quote(user_text)
-        clean_prompt = requests.utils.quote(f"System instruction: {prompt}\nPrevious history:\n{context_str}")
+        # НАПРЯМУЮ К ОФИЦИАЛЬНЫМ, ОПЛАЧЕННЫМ СЕРВЕРАМ DEEPSEEK
+        API_URL = "https://deepseek.com"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "deepseek-chat",
+            "messages": messages,
+            "max_tokens": 150,
+            "temperature": 0.7
+        }
         
-        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}"
-        
-        response = requests.get(API_URL, timeout=12)
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
+        answer = ""
         
         if response.status_code == 200:
-            answer = response.text.strip()
+            answer = response.json()["choices"][0]["message"]["content"].strip()
         else:
-            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
-
-        if not answer:
-            answer = "Я задумался, боров. Повтори запрос!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+            answer = f"🔴 Ошибка DeepSeek API (Код {response.status_code})."
 
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy" and "🔴" not in answer: 
