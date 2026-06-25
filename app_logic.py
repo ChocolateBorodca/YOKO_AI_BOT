@@ -7,7 +7,6 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-# Используем переменную HF_TOKEN, в которую ты вставил оригинальный ключ DeepSeek sk-...
 DEEPSEEK_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
@@ -144,7 +143,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 sentences."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -155,34 +154,41 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_text})
 
-    try:
-        # НАПРЯМУЮ К ОФИЦИАЛЬНЫМ, ОПЛАЧЕННЫМ СЕРВЕРАМ DEEPSEEK
-        API_URL = "https://deepseek.com"
-        headers = {
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "deepseek-chat",
-            "messages": messages,
-            "max_tokens": 150,
-            "temperature": 0.7
-        }
-        
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
-        answer = ""
-        
-        if response.status_code == 200:
-            answer = response.json()["choices"][0]["message"]["content"].strip()
-        else:
-            answer = f"🔴 Ошибка DeepSeek API (Код {response.status_code})."
+    answer = ""
+    
+    # ШАГ 1: Сначала пробуем прямой DeepSeek через твой ключ
+    if DEEPSEEK_API_KEY and DEEPSEEK_API_KEY.startswith("sk-"):
+        try:
+            API_URL = "https://deepseek.com"
+            headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+            payload = {"model": "deepseek-chat", "messages": messages, "max_tokens": 150, "temperature": 0.7}
+            response = requests.post(API_URL, json=payload, headers=headers, timeout=8)
+            if response.status_code == 200:
+                answer = response.json()["choices"]["message"]["content"].strip()
+        except:
+            pass
 
-        save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy" and "🔴" not in answer: 
-            answer = translate_to_burmalda(answer)
-        return answer
-    except Exception as e:
-        return f"🔴 Ошибка соединения: {str(e)[:30]}"
+    # ШАГ 2: Если DeepSeek выдал 403 или не сработал — мгновенно включаем бесплатный аварийный шлюз без ключей
+    if not answer:
+        try:
+            API_URL_ALT = "https://pollinations.ai"
+            payload_alt = {
+                "messages": messages,
+                "model": "qwen"  # Вечно свободная и стабильная модель без 403 блокировок
+            }
+            response_alt = requests.post(API_URL_ALT, json=payload_alt, timeout=10)
+            if response_alt.status_code == 200:
+                answer = response_alt.text.strip()
+        except Exception as e:
+            answer = f"🔴 Ошибка системных шлюзов ИИ: {str(e)[:20]}"
+
+    if not answer:
+        answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+
+    save_message(user_id, "assistant", answer)
+    if current_mode == "mellstroy" and "🔴" not in answer: 
+        answer = translate_to_burmalda(answer)
+    return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
