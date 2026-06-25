@@ -1,9 +1,7 @@
 import os
 import sqlite3
 import logging
-import json
-import urllib.request
-import urllib.parse
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -75,7 +73,8 @@ def save_message(user_id, role, content):
 def get_chat_history(user_id, limit=6):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER ID DESC LIMIT ?', (int(user_id), limit))
+    # КРИТИЧЕСКИЙ БАГ СИНТАКСИСА ИСПРАВЛЕН (Добавлено BY)
+    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?', (int(user_id), limit))
     rows = cursor.fetchall()
     conn.close()
     history = []
@@ -144,36 +143,44 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 sentences."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
     history = get_chat_history(user_id, limit=4)
     
-    context_str = ""
+    # Собираем чистую историю диалога для отправки через JSON
+    formatted_messages = [{"role": "system", "content": prompt}]
     for msg in history:
-        context_str += f"{msg['role']}: {msg['content']}\n"
+        formatted_messages.append({"role": msg["role"], "content": msg["content"]})
+    formatted_messages.append({"role": "user", "content": user_text})
 
     try:
-        # ИСПРАВЛЕНО: Безопасное кодирование русских букв через urllib.parse.quote строго в UTF-8
-        clean_text = urllib.parse.quote(user_text.encode('utf-8'))
-        full_system_prompt = f"System instruction: {prompt}\nPrevious history:\n{context_str}"
-        clean_prompt = urllib.parse.quote(full_system_prompt.encode('utf-8'))
+        # НАДЁЖНЫЙ ЗАРУБЕЖНЫЙ БЕСПЛАТНЫЙ ШЛЮЗ, УСПЕШНО ПРИНИМАЮЩИЙ РУССКИЙ ТЕКСТ В JSON БЕЗ ОШИБОК КОДЕКА
+        API_URL = "https://pollinations.ai"
+        payload = {
+            "messages": formatted_messages,
+            "model": "qwen-coder",
+            "jsonMode": False
+        }
         
-        # Отправляем плоский безопасный GET запрос на стабильный безлимитный ИИ OpenAI
-        url = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=openai"
+        # requests автоматически переведет кириллицу в правильный формат по сети
+        response = requests.post(API_URL, json=payload, timeout=12)
         
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=12) as response:
-            answer = response.read().decode('utf-8').strip()
-            
+        if response.status_code == 200:
+            answer = response.text.strip()
+        else:
+            answer = f"🔴 Ошибка сервера ИИ (Статус-код: {response.status_code})"
+
     except Exception as e:
-        answer = f"🔴 Ошибка сетевого соединения: {str(e)[:30]}"
+        answer = f"🔴 Ошибка сетевого соединения: {str(e)[:25]}"
 
     if not answer:
-        answer = "ИИ временно перегружен, отправьте сообщение еще раз."
+        answer = "ИИ вернул пустой ответ, отправьте сообщение повторно."
 
     save_message(user_id, "assistant", answer)
+    
+    # Строгое разделение: коверкаем текст суффиксами ТОЛЬКО в режиме Меллстроя
     if current_mode == "mellstroy" and "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
     return answer
