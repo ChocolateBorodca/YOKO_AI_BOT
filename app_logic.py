@@ -7,7 +7,6 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-OPENROUTER_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -40,7 +39,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row), str(row)
+    return int(row[0]), str(row[1])
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -48,7 +47,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row) if row else "default"
+    return str(row[0]) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -155,28 +154,23 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        API_URL = "https://openrouter.ai"
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://render.com",
-            "X-Title": "YokoBot"
-        }
+        # УЛЬТИМАТИВНЫЙ ОБХОД ЛИМИТОВ: ПРЯМОЙ СТАБИЛЬНЫЙ POST-ЗАПРОС К МОДЕЛИ DEEPSEEK
+        API_URL = "https://pollinations.ai"
         payload = {
-            # ПЕРЕКЛЮЧАЕМ НА ВЕЧНО СТАБИЛЬНУЮ И БЕЗОТКАЗНУЮ МОДЕЛЬ LLAMA 3.2
-            "model": "meta-llama/llama-3.2-3b-instruct:free",
             "messages": messages,
-            "max_tokens": 150,
-            "temperature": 0.7
+            "model": "deepseek"
         }
         
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
+        response = requests.post(API_URL, json=payload, timeout=12)
         answer = ""
         
         if response.status_code == 200:
-            answer = response.json()["choices"]["message"]["content"].strip()
+            answer = response.text.strip()
         else:
-            answer = f"🔴 Ошибка OpenRouter API (Код {response.status_code})."
+            answer = f"🔴 Ошибка сервера ИИ (Код {response.status_code})"
+
+        if not answer:
+            answer = "Я задумался, боров. Повтори запрос!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
         save_message(user_id, "assistant", answer)
         if current_mode == "mellstroy" and "🔴" not in answer: 
