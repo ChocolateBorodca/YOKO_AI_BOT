@@ -75,7 +75,7 @@ def save_message(user_id, role, content):
 def get_chat_history(user_id, limit=6):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?', (int(user_id), limit))
+    cursor.execute('SELECT role, content FROM chat_history WHERE user_id = ? ORDER ID DESC LIMIT ?', (int(user_id), limit))
     rows = cursor.fetchall()
     conn.close()
     history = []
@@ -144,7 +144,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 sentences."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -155,11 +155,12 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         context_str += f"{msg['role']}: {msg['content']}\n"
 
     try:
-        # УЛЬТИМАТИВНЫЙ ОБХОД БЕЗ БИБЛИОТЕК И БЕЗ МЕТОДА POST (ИСКЛЮЧАЕТ ОШИБКУ 405)
-        clean_text = urllib.parse.quote(user_text)
-        clean_prompt = urllib.parse.quote(f"System instruction: {prompt}\nPrevious history:\n{context_str}")
+        # ИСПРАВЛЕНО: Безопасное кодирование русских букв через urllib.parse.quote строго в UTF-8
+        clean_text = urllib.parse.quote(user_text.encode('utf-8'))
+        full_system_prompt = f"System instruction: {prompt}\nPrevious history:\n{context_str}"
+        clean_prompt = urllib.parse.quote(full_system_prompt.encode('utf-8'))
         
-        # Отправляем чистый плоский GET запрос на стабильное зеркало OpenAI
+        # Отправляем плоский безопасный GET запрос на стабильный безлимитный ИИ OpenAI
         url = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=openai"
         
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
