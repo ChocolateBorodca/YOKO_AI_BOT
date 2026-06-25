@@ -1,11 +1,11 @@
 import os
 import sqlite3
 import logging
-import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
-from utils import translate_to_burmalda, process_voice_message
+# ПОДКЛЮЧАЕМ АВТОНОМНЫЙ МУЛЬТИ-ШЛЮЗ G4F БЕЗ КОДОВ ОШИБОК И БЛОКИРОВОК
+import g4f
 
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
@@ -142,7 +142,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -154,37 +154,24 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     messages.append({"role": "user", "content": user_text})
 
     try:
-        # ВЕЧНО СТАБИЛЬНЫЙ ЗАРУБЕЖНЫЙ ШЛЮЗ БЕЗ КЛЮЧЕЙ И ОШИБОК БЛОКИРОВКИ 403
-        API_URL = "https://aryahcr.cc"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "messages": messages,
-            "model": "gpt-3.5-turbo",
-            "stream": False
-        }
+        # ЗАПУСКАЕМ АВТОМАТИЧЕСКИЙ СВЕРХНАДЁЖНЫЙ ПЕРЕБОР РАБОЧИХ ЗАРУБЕЖНЫХ ПРОВАЙДЕРОВ
+        response = g4f.ChatCompletion.create(
+            model=g4f.models.default,
+            messages=messages,
+            auth=False
+        )
         
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
-        answer = ""
+        answer = str(response).strip()
         
-        if response.status_code == 200:
-            res_data = response.json()
-            # Корректно вытаскиваем текст ответа из структуры Nexra
-            if "gpt" in res_data:
-                answer = res_data["gpt"].strip()
-            elif "choices" in res_data:
-                answer = res_data["choices"][0]["message"]["content"].strip()
-        else:
-            answer = f"🔴 Ошибка шлюза ИИ (Код {response.status_code})"
-
-        if not answer:
-            answer = "Ошибка: Сервер вернул пустой ответ. Повтори запрос!"
+        if not answer or "Ошибка" in answer or "Error" in answer:
+            answer = "Извините, сетевой узел перегружен. Пожалуйста, отправьте сообщение ещё раз."
 
         save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy" and "🔴" not in answer: 
+        if current_mode == "mellstroy" and "Извините" not in answer: 
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        return f"🔴 Ошибка соединения: {str(e)[:30]}"
+        return f"🔴 Сетевой сбой систем ИИ. Повтори запрос!"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
