@@ -1,17 +1,24 @@
 import os
 import sqlite3
 import logging
-import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
-from utils import translate_to_burmalda, process_voice_message
+# Подключаем официальный клиент OpenAI для стабильной работы с OpenRouter
+from openai import OpenAI
 
+OPENROUTER_API_KEY = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
 try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except: ADMIN_ID = 0
+
+# Инициализируем железный коннект к OpenRouter
+client = OpenAI(
+    base_url="https://openrouter.ai",
+    api_key=OPENROUTER_API_KEY
+)
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -138,43 +145,43 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode_str = "Меллстроевский (Бурмалда)" if current_mode == "mellstroy" else "Обычный YOKO"
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: {status_str}\n• Текущий режим: {mode_str}")
 
+def run_openai_call(messages):
+    """Синхронный запуск вызова официальной библиотеки для защиты от сетевых таймаутов"""
+    completion = client.chat.completions.create(
+        extra_headers={
+            "HTTP-Referer": "https://render.com",
+            "X-Title": "YokoBot",
+        },
+        model="meta-llama/llama-3.2-3b-instruct:free",
+        messages=messages
+    )
+    return completion.choices[0].message.content
+
 async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый и очень дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
     history = get_chat_history(user_id, limit=4)
     
-    # Конструируем чистый плоский запрос под стандарты открытого шлюза
-    context_str = ""
+    messages = [{"role": "system", "content": prompt}]
     for msg in history:
-        context_str += f"{msg['role']}: {msg['content']}\n"
-    
-    # СВЕРХСТАБИЛЬНЫЙ ПУБЛИЧНЫЙ МУЛЬТИ-ШЛЮЗ НА БАЗЕ МОДЕЛИ QWEN-CODER (ПРОГРЕВАЕТСЯ МГНОВЕННО)
-    API_URL = "https://pollinations.ai"
-    payload = {
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Previous history:\n{context_str}\nCurrent message: {user_text}"}
-        ],
-        "model": "qwen-coder"
-    }
-    
-    response = requests.post(API_URL, json=payload, timeout=12)
-    
-    if response.status_code == 200:
-        answer = response.text.strip()
-    else:
-        answer = f"🔴 Ошибка ИИ-сервера (Статус-код: {response.status_code}). Попробуйте отправить сообщение ещё раз."
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_text})
 
-    if not answer:
-        answer = "ИИ вернул пустой ответ. Отправьте сообщение повторно."
+    try:
+        import asyncio
+        # Запускаем официальный стабильный метод через пул потоков
+        answer = await asyncio.to_thread(run_openai_call, messages)
+        answer = str(answer).strip()
+    except Exception as e:
+        answer = f"🔴 Ошибка авторизации ключа API OpenRouter: {str(e)[:30]}"
 
     save_message(user_id, "assistant", answer)
-    if current_mode == "mellstroy" and "🔴" not in answer and "Ошибка" not in answer: 
+    if current_mode == "mellstroy" and "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
     return answer
 
