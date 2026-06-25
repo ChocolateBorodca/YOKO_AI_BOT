@@ -7,18 +7,15 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-OPENROUTER_API_KEY = os.getenv("HF_TOKEN")
 YOUR_TELEGRAM_ID = 1151550758
 
 try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except: ADMIN_ID = 0
 
 def init_db():
-    # Заглушка для базы, чтобы убрать любые зависания процессов
     pass
 
 def get_user_data(user_id):
-    # Жесткая автономная проверка админа без запросов к битой базе данных
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
@@ -38,7 +35,6 @@ def save_message(user_id, role, content):
     pass
 
 def get_chat_history(user_id, limit=6):
-    # Возвращаем пустую историю, чтобы обойти поломку таблиц SQLite
     return []
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,55 +78,37 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: Активирован (Premium)")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
-    if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
-    else:
-        prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
-
-    messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": user_text}
-    ]
+    # Промпт под хайповый режим Меллстроя
+    prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
 
     try:
-        API_URL = "https://openrouter.ai"
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://render.com",
-            "X-Title": "YokoBot"
-        }
-        payload = {
-            "model": "ibm/granite-3.1-8b-instruct:free",
-            "messages": messages,
-            "max_tokens": 150,
-            "temperature": 0.7
-        }
+        # ЖЕЛЕЗОБЕТОННЫЙ URL-ШЛЮЗ: ИСПОЛЬЗУЕМ КРИСТАЛЬНО ЧИСТЫЙ GET-ЗАПРОС В ОБХОД КЛЮЧЕЙ И ЛИМИТОВ
+        clean_text = requests.utils.quote(user_text)
+        clean_prompt = requests.utils.quote(prompt)
         
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=15)
-        answer = ""
+        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=searchgpt"
+        
+        response = requests.get(API_URL, timeout=12)
         
         if response.status_code == 200:
-            res_json = response.json()
-            if "choices" in res_json and len(res_json["choices"]) > 0:
-                answer = res_json["choices"]["message"]["content"].strip()
+            answer = response.text.strip()
         else:
-            answer = f"🔴 Ошибка OpenRouter API (Статус-код: {response.status_code})"
+            answer = f"🔴 Ошибка сетевого узла ИИ (Код {response.status_code})"
 
     except Exception as e:
-        answer = f"🔴 Ошибка соединения: {str(e)[:30]}"
+        answer = f"🔴 Сбой линии связи: {str(e)[:25]}"
 
     if not answer:
-        answer = f"🔴 Не удалось получить ответ от модели IBM Granite."
+        answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
 
-    if current_mode == "mellstroy" and "🔴" not in answer: 
+    # В режиме /chat по умолчанию у нас всегда включена сочная Бурмалда
+    if "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
     return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
-    # Передаем управление напрямую независимо от зависших таблиц БД
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, "mellstroy"))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
