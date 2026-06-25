@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==20.8
 requests
 Pillow
 certifi
+g4f>=0.3.3.0
