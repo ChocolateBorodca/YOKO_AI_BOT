@@ -39,7 +39,7 @@ def get_user_data(user_id):
         conn.commit()
         conn.close()
         return 0, "default"
-    return int(row[0]), str(row[1])
+    return int(row), str(row)
 
 def get_group_mode(chat_id):
     conn = sqlite3.connect(DB_FILE)
@@ -47,7 +47,7 @@ def get_group_mode(chat_id):
     cursor.execute('SELECT mode FROM group_modes WHERE chat_id = ?', (int(chat_id),))
     row = cursor.fetchone()
     conn.close()
-    return str(row[0]) if row else "default"
+    return str(row) if row else "default"
 
 def set_group_mode(chat_id, mode):
     conn = sqlite3.connect(DB_FILE)
@@ -148,21 +148,18 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    messages = [{"role": "system", "content": prompt}]
+    context_str = ""
     for msg in history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": user_text})
+        context_str += f"{msg['role']}: {msg['content']}\n"
 
     try:
-        # УЛЬТИМАТИВНЫЙ ОБХОД ЛИМИТОВ: ПРЯМОЙ СТАБИЛЬНЫЙ POST-ЗАПРОС К МОДЕЛИ DEEPSEEK
-        API_URL = "https://pollinations.ai"
-        payload = {
-            "messages": messages,
-            "model": "deepseek"
-        }
+        # ЖЕЛЕЗОБЕТОННЫЙ СТАБИЛЬНЫЙ GET-ЗАПРОС В ОБХОД ОШИБОК 405
+        clean_text = requests.utils.quote(user_text)
+        clean_prompt = requests.utils.quote(f"System instruction: {prompt}\nPrevious history:\n{context_str}")
         
-        response = requests.post(API_URL, json=payload, timeout=12)
-        answer = ""
+        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}"
+        
+        response = requests.get(API_URL, timeout=12)
         
         if response.status_code == 200:
             answer = response.text.strip()
