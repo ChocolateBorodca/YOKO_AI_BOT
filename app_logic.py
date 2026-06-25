@@ -7,8 +7,6 @@ from telegram.ext import ContextTypes
 
 from utils import translate_to_burmalda, process_voice_message
 
-# Используем твой токен Write hf_... из переменной окружения в Render
-HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -144,47 +142,41 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
     history = get_chat_history(user_id, limit=4)
     
-    try:
-        # СТАБИЛЬНЫЙ ОРИГИНАЛЬНЫЙ ЭНДПОИНТ НА ПОЛНОСТЬЮ ОТКРЫТУЮ БЕСПЛАТНУЮ МОДЕЛЬ QWEN 1.5B
-        API_URL = "https://huggingface.co"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
-        
-        # Передаем контекст в чистом виде
-        payload = {
-            "inputs": f"System: {prompt}\nContext: {history}\nUser: {user_text}\nAssistant:",
-            "parameters": {"max_new_tokens": 120, "temperature": 0.7}
-        }
-        
-        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
-        answer = ""
-        
-        if response.status_code == 200:
-            res_data = response.json()
-            if isinstance(res_data, list) and len(res_data) > 0:
-                answer = res_data[0].get("generated_text", "")
-            elif isinstance(res_data, dict):
-                answer = res_data.get("generated_text", "")
-                
-            if "Assistant:" in answer:
-                answer = answer.split("Assistant:")[-1].strip()
-        else:
-            answer = f"🔴 Ошибка авторизации ИИ (Код {response.status_code})"
+    # Конструируем чистый плоский запрос под стандарты открытого шлюза
+    context_str = ""
+    for msg in history:
+        context_str += f"{msg['role']}: {msg['content']}\n"
+    
+    # СВЕРХСТАБИЛЬНЫЙ ПУБЛИЧНЫЙ МУЛЬТИ-ШЛЮЗ НА БАЗЕ МОДЕЛИ QWEN-CODER (ПРОГРЕВАЕТСЯ МГНОВЕННО)
+    API_URL = "https://pollinations.ai"
+    payload = {
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Previous history:\n{context_str}\nCurrent message: {user_text}"}
+        ],
+        "model": "qwen-coder"
+    }
+    
+    response = requests.post(API_URL, json=payload, timeout=12)
+    
+    if response.status_code == 200:
+        answer = response.text.strip()
+    else:
+        answer = f"🔴 Ошибка ИИ-сервера (Статус-код: {response.status_code}). Попробуйте отправить сообщение ещё раз."
 
-        if not answer or "🔴" in answer:
-            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
+    if not answer:
+        answer = "ИИ вернул пустой ответ. Отправьте сообщение повторно."
 
-        save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy" and "задумался" not in answer: 
-            answer = translate_to_burmalda(answer)
-        return answer
-    except Exception as e:
-        return f"🔴 Ошибка сети: {str(e)[:25]}"
+    save_message(user_id, "assistant", answer)
+    if current_mode == "mellstroy" and "🔴" not in answer and "Ошибка" not in answer: 
+        answer = translate_to_burmalda(answer)
+    return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -197,4 +189,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
