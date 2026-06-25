@@ -1,12 +1,14 @@
 import os
 import sqlite3
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
-# ПОДКЛЮЧАЕМ АВТОНОМНЫЙ МУЛЬТИ-ШЛЮЗ G4F БЕЗ КОДОВ ОШИБОК И БЛОКИРОВОК
-import g4f
+from utils import translate_to_burmalda, process_voice_message
 
+# Используем твой токен Write hf_... из переменной окружения в Render
+HF_TOKEN = os.getenv("HF_TOKEN")
 DB_FILE = "yoko_database.db"
 YOUR_TELEGRAM_ID = 1151550758
 
@@ -148,30 +150,41 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         
     history = get_chat_history(user_id, limit=4)
     
-    messages = [{"role": "system", "content": prompt}]
-    for msg in history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": user_text})
-
     try:
-        # ЗАПУСКАЕМ АВТОМАТИЧЕСКИЙ СВЕРХНАДЁЖНЫЙ ПЕРЕБОР РАБОЧИХ ЗАРУБЕЖНЫХ ПРОВАЙДЕРОВ
-        response = g4f.ChatCompletion.create(
-            model=g4f.models.default,
-            messages=messages,
-            auth=False
-        )
+        # СТАБИЛЬНЫЙ ОРИГИНАЛЬНЫЙ ЭНДПОИНТ НА ПОЛНОСТЬЮ ОТКРЫТУЮ БЕСПЛАТНУЮ МОДЕЛЬ QWEN 1.5B
+        API_URL = "https://huggingface.co"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
         
-        answer = str(response).strip()
+        # Передаем контекст в чистом виде
+        payload = {
+            "inputs": f"System: {prompt}\nContext: {history}\nUser: {user_text}\nAssistant:",
+            "parameters": {"max_new_tokens": 120, "temperature": 0.7}
+        }
         
-        if not answer or "Ошибка" in answer or "Error" in answer:
-            answer = "Извините, сетевой узел перегружен. Пожалуйста, отправьте сообщение ещё раз."
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=12)
+        answer = ""
+        
+        if response.status_code == 200:
+            res_data = response.json()
+            if isinstance(res_data, list) and len(res_data) > 0:
+                answer = res_data[0].get("generated_text", "")
+            elif isinstance(res_data, dict):
+                answer = res_data.get("generated_text", "")
+                
+            if "Assistant:" in answer:
+                answer = answer.split("Assistant:")[-1].strip()
+        else:
+            answer = f"🔴 Ошибка авторизации ИИ (Код {response.status_code})"
+
+        if not answer or "🔴" in answer:
+            answer = "Братишка, ч задумался. Повтори суету!" if current_mode == "mellstroy" else "Я задумался над ответом, повторите пожалуйста."
 
         save_message(user_id, "assistant", answer)
-        if current_mode == "mellstroy" and "Извините" not in answer: 
+        if current_mode == "mellstroy" and "задумался" not in answer: 
             answer = translate_to_burmalda(answer)
         return answer
     except Exception as e:
-        return f"🔴 Сетевой сбой систем ИИ. Повтори запрос!"
+        return f"🔴 Ошибка сети: {str(e)[:25]}"
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -184,4 +197,4 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+    await process_voice_message(update, context, HF_TOKEN, handle_ai_logic, get_user_data)
