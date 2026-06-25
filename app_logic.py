@@ -143,7 +143,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     save_message(user_id, "user", user_text)
     
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый и дерзкий стример. Говори угарно, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложения."
     else:
         prompt = "Ты — умный и вежливый ИИ-помощник YOKO. Отвечай кратко, грамотно, без сленга и мата."
         
@@ -160,12 +160,11 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://render.com",
-            "X-Title": "YokoTelegramBot"
+            "X-Title": "YokoBot"
         }
-        
         payload = {
-            # ВКЛЮЧАЕМ СВОБОДНУЮ МОДЕЛЬ IBM GRANITE БЕЗ НАПЛЫВА ОЧЕРЕДЕЙ ПОЛЬЗОВАТЕЛЕЙ
-            "model": "ibm/granite-3.1-8b-instruct:free",
+            # ПЕРЕКЛЮЧАЕМ НА ВЕЧНО СТАБИЛЬНУЮ И БЕЗОТКАЗНУЮ МОДЕЛЬ LLAMA 3.2
+            "model": "meta-llama/llama-3.2-3b-instruct:free",
             "messages": messages,
             "max_tokens": 150,
             "temperature": 0.7
