@@ -3,4 +3,4 @@ requests
 Pillow
 certifi
 openai
-duckduckgo_search
+duckduckgo_search==6.2.12
