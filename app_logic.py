@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import logging
+import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -15,7 +16,6 @@ except:
     ADMIN_ID = 0
 
 def init_db():
-    """Создает базу данных и таблицу пользователей при первом старте"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -29,7 +29,6 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    """Получает статус и режим пользователя из реальной базы данных"""
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
@@ -46,7 +45,6 @@ def get_user_data(user_id):
     return 0, "default"
 
 def set_user_mode(user_id, mode):
-    """Переключает текущий текстовый режим пользователя"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -57,7 +55,6 @@ def set_user_mode(user_id, mode):
     conn.close()
 
 def activate_premium(user_id):
-    """Выдает пользователю вечный Премиум статус в базе данных"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -104,7 +101,6 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Срабатывает в момент реального перевода Telegram Stars"""
     user_id = update.message.from_user.id
     activate_premium(user_id)
     set_user_mode(user_id, "mellstroy")
@@ -132,25 +128,26 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
     try:
-        # СТАБИЛЬНЫЙ ОФИЦИАЛЬНЫЙ ДВИЖОК DUCKDUCKGO
-        from duckduckgo_search import DDGS
+        # ПРЯМОЙ URL ЗАПРОС К КРИСТАЛЬНО ЧИСТОМУ API ИИ (БЕЗ ДУРАЦКИХ БИБЛИОТЕК)
+        # Модель qwen-2.5-72b — быстрая, мощная и бесплатная
+        url = "https://pollinations.ai"
+        payload = {
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_text}
+            ],
+            "model": "qwen-2.5-72b",
+            "jsonMode": False
+        }
         
-        full_message = f"Инструкция: {prompt}\nПользователь: {user_text}"
-        
-        with DDGS() as ddgs:
-            # ЖЕЛЕЗОБЕТОННО ПОД ПОСЛЕДНЮЮ ВЕРСИЮ: Передаем через keywords=
-            response = ddgs.text(keywords=full_message, model="gpt-4o-mini")
-            
-        if response:
-            answer = response.strip()
+        response = requests.post(url, json=payload, timeout=15)
+        if response.status_code == 200:
+            answer = response.text.strip()
         else:
-            answer = "🔴 ИИ вернул пустой ответ, повтори запрос."
+            answer = f"🔴 Ошибка ИИ узла (Код {response.status_code})"
             
     except Exception as e:
-        answer = f"🔴 Сбой линии ИИ: {str(e)[:40]}"
-
-    if not answer:
-        answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
+        answer = f"🔴 Сбой связи с ИИ: {str(e)[:40]}"
 
     if current_mode == "mellstroy" and "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
@@ -160,7 +157,6 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
     _, current_mode = get_user_data(user_id)
-    
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
