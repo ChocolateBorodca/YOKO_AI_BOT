@@ -134,11 +134,13 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
     try:
         hf_token = os.getenv("HF_TOKEN")
+        
+        # Используем ПОЛНОСТЬЮ ОТКРЫТУЮ модель Qwen 2.5 на серверах Hugging Face
         API_URL = "https://huggingface.co"
         headers = {"Authorization": f"Bearer {hf_token}"}
         
         payload = {
-            "inputs": f"<|system|>\n{prompt}\n<|user|>\n{user_text}\n<|assistant|>\n",
+            "inputs": f"<|im_start|>\nsystem\n{prompt}<|im_end|>\n<|im_start|>\nuser\n{user_text}<|im_end|>\n<|im_start|>\nasstistant\n",
             "parameters": {"max_new_tokens": 150, "return_full_text": False}
         }
         
@@ -148,8 +150,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             res_json = response.json()
             if isinstance(res_json, list) and len(res_json) > 0:
                 answer = res_json[0].get("generated_text", "").strip()
-            else:
+            elif isinstance(res_json, dict):
                 answer = res_json.get("generated_text", "").strip()
+            else:
+                answer = str(res_json)
         else:
             answer = f"🔴 Ошибка ИИ Hugging Face (Код {response.status_code})"
             
