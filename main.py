@@ -28,9 +28,10 @@ async def set_default_commands(application):
     await application.bot.set_my_commands(commands)
 
 if __name__ == '__main__':
-    # Включаем настоящую базу данных
+    # Оживляем базу данных
     app_logic.init_db()
     
+    # Обманка-заглушка порта для бесперебойной жизни на Render
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
     
     if TELEGRAM_TOKEN:
@@ -44,18 +45,18 @@ if __name__ == '__main__':
             
         loop.run_until_complete(set_default_commands(app))
         
-        # Регистрация команд
+        # Обработчики текстовых команд
         app.add_handler(CommandHandler("start", app_logic.start))
         app.add_handler(CommandHandler("yoko", app_logic.cmd_yoko))
         app.add_handler(CommandHandler("buy", app_logic.buy_premium))
         app.add_handler(CommandHandler("mellstroy", app_logic.cmd_mellstroy))
         app.add_handler(CommandHandler("profile", app_logic.cmd_profile))
         
-        # ПОЧИНЕНО: Обработка платежей (Проверка и Успешное начисление)
+        # Полная обработка покупок Звезд
         app.add_handler(PreCheckoutQueryHandler(app_logic.precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, app_logic.successful_payment_callback))
         
-        # Тексты и голос
+        # Слушаем обычные сообщения и голосовые
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, app_logic.chat))
         app.add_handler(MessageHandler(filters.VOICE, app_logic.handle_voice_gateway))
         
