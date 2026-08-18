@@ -16,6 +16,7 @@ except:
     ADMIN_ID = 0
 
 def init_db():
+    """Создает базу данных и таблицу пользователей при первом старте"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -29,6 +30,7 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
+    """Получает статус и режим пользователя из реальной базы данных"""
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
@@ -45,6 +47,7 @@ def get_user_data(user_id):
     return 0, "default"
 
 def set_user_mode(user_id, mode):
+    """Переключает текущий текстовый режим пользователя"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -55,6 +58,7 @@ def set_user_mode(user_id, mode):
     conn.close()
 
 def activate_premium(user_id):
+    """Выдает пользователю вечный Премиум статус в базе данных"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -101,6 +105,7 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Срабатывает в момент реального перевода Telegram Stars"""
     user_id = update.message.from_user.id
     activate_premium(user_id)
     set_user_mode(user_id, "mellstroy")
@@ -128,19 +133,14 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
     try:
-        # ПРЯМОЙ URL ЗАПРОС К КРИСТАЛЬНО ЧИСТОМУ API ИИ (БЕЗ ДУРАЦКИХ БИБЛИОТЕК)
-        # Модель qwen-2.5-72b — быстрая, мощная и бесплатная
-        url = "https://pollinations.ai"
-        payload = {
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_text}
-            ],
-            "model": "qwen-2.5-72b",
-            "jsonMode": False
-        }
+        # ПОЧИНЕНО: Чистый GET-запрос к мощной Qwen-2.5 без лишних библиотек
+        clean_text = requests.utils.quote(user_text)
+        clean_prompt = requests.utils.quote(prompt)
         
-        response = requests.post(url, json=payload, timeout=15)
+        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=qwen-2.5-72b"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        response = requests.get(API_URL, headers=headers, timeout=15)
         if response.status_code == 200:
             answer = response.text.strip()
         else:
