@@ -20,7 +20,7 @@ class Health(BaseHTTPRequestHandler):
 async def set_default_commands(application):
     commands = [
         BotCommand("start", "Запустить бота и увидеть команды"),
-        BotCommand("profile", "👑 Твой статус (Нормальный русский)"),
+        BotCommand("profile", "👑 Твой статус и подписка"),
         BotCommand("yoko", "😇 Обычный ИИ (Бесплатно)"),
         BotCommand("buy", "⚡ Купить Премиум функции (15 звезд)"),
         BotCommand("mellstroy", "🎰 Включить режим МЕЛЛСТРОЯ")
@@ -28,20 +28,35 @@ async def set_default_commands(application):
     await application.bot.set_my_commands(commands)
 
 if __name__ == '__main__':
+    # Включаем настоящую базу данных
     app_logic.init_db()
+    
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), Health).serve_forever(), daemon=True).start()
+    
     if TELEGRAM_TOKEN:
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         import asyncio
-        try: loop = asyncio.get_event_loop()
-        except RuntimeError: loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+        try: 
+            loop = asyncio.get_event_loop()
+        except RuntimeError: 
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
         loop.run_until_complete(set_default_commands(app))
+        
+        # Регистрация команд
         app.add_handler(CommandHandler("start", app_logic.start))
         app.add_handler(CommandHandler("yoko", app_logic.cmd_yoko))
         app.add_handler(CommandHandler("buy", app_logic.buy_premium))
         app.add_handler(CommandHandler("mellstroy", app_logic.cmd_mellstroy))
         app.add_handler(CommandHandler("profile", app_logic.cmd_profile))
+        
+        # ПОЧИНЕНО: Обработка платежей (Проверка и Успешное начисление)
         app.add_handler(PreCheckoutQueryHandler(app_logic.precheckout_callback))
+        app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, app_logic.successful_payment_callback))
+        
+        # Тексты и голос
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, app_logic.chat))
         app.add_handler(MessageHandler(filters.VOICE, app_logic.handle_voice_gateway))
+        
         app.run_polling(drop_pending_updates=True)
