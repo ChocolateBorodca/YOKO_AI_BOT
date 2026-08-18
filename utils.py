@@ -2,6 +2,7 @@ import re
 import requests
 
 def translate_to_burmalda(text):
+    """Словарь перевода обычного текста в язык Бурмалды"""
     text = re.sub(r'\bя\b', 'ч', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдед\b', 'дод', text, flags=re.IGNORECASE)
     text = re.sub(r'\bдеда\b', 'дода', text, flags=re.IGNORECASE)
@@ -26,7 +27,7 @@ def translate_to_burmalda(text):
     return " ".join(burmalda_words)
 
 def transcribe_audio(audio_bytes, hf_token):
-    """ПОЧИНЕНО: Теперь аудио улетает на реальный бесплатный ИИ Whisper от OpenAI на серверах Hugging Face"""
+    """Починенный адрес: отправляет аудио на Whisper-модель в Hugging Face"""
     try:
         API_URL = "https://huggingface.co"
         headers = {"Authorization": f"Bearer {hf_token}"}
