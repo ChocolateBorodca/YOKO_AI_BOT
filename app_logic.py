@@ -1,7 +1,6 @@
 import os
 import sqlite3
 import logging
-import requests
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -133,20 +132,22 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
     try:
-        clean_text = requests.utils.quote(user_text)
-        clean_prompt = requests.utils.quote(prompt)
+        # ЖЕЛЕЗОБЕТОННЫЙ И СТАБИЛЬНЫЙ ОФИЦИАЛЬНЫЙ ДВИЖОК DUCKDUCKGO
+        from duckduckgo_search import DDGS
         
-        # Починенный, железобетонный адрес текстового ИИ-шлюза
-        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=openai"
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        full_message = f"Инструкция: {prompt}\nПользователь: {user_text}"
         
-        response = requests.get(API_URL, headers=headers, timeout=15)
-        if response.status_code == 200:
-            answer = response.text.strip()
+        with DDGS() as ddgs:
+            # Бесплатная, сверхбыстрая и мощная модель GPT-4o-mini
+            response = ddgs.chat(full_message, model="gpt-4o-mini")
+            
+        if response:
+            answer = response.strip()
         else:
-            answer = f"🔴 Ошибка сетевого узла ИИ (Код {response.status_code})"
+            answer = "🔴 ИИ вернул пустой ответ, повтори запрос."
+            
     except Exception as e:
-        answer = f"🔴 Сбой линии связи: {str(e)[:25]}"
+        answer = f"🔴 Сбой линии ИИ: {str(e)[:40]}"
 
     if not answer:
         answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
