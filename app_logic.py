@@ -16,7 +16,7 @@ except:
     ADMIN_ID = 0
 
 def init_db():
-    """Создает реальную базу данных, если её ещё нет"""
+    """Создает базу данных и таблицу пользователей при первом старте"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -30,7 +30,7 @@ def init_db():
     conn.close()
 
 def get_user_data(user_id):
-    """Проверяет статус пользователя в реальной БД"""
+    """Получает статус и режим пользователя из реальной базы данных"""
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
@@ -47,7 +47,7 @@ def get_user_data(user_id):
     return 0, "default"
 
 def set_user_mode(user_id, mode):
-    """Сохраняет выбранный режим в базу данных"""
+    """Переключает текущий текстовый режим пользователя"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -58,7 +58,7 @@ def set_user_mode(user_id, mode):
     conn.close()
 
 def activate_premium(user_id):
-    """Активирует премиум в базе данных после реальной оплаты"""
+    """Выдает пользователю вечный Премиум статус в базе данных"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -105,7 +105,7 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ЭТА ФУНКЦИЯ ТЕПЕРЬ РЕАЛЬНО ВЫДАЕТ ПРЕМИУМ ПРИ УСПЕШНОЙ ОПЛАТЕ!"""
+    """Срабатывает в момент реального перевода Telegram Stars"""
     user_id = update.message.from_user.id
     activate_premium(user_id)
     set_user_mode(user_id, "mellstroy")
@@ -127,7 +127,6 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Статус: {status}\n• Активный режим: {mode}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
-    # Промпты меняются в зависимости от того, включил ли пользователь Меллстроя
     if current_mode == "mellstroy":
         prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
     else:
@@ -137,10 +136,11 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         clean_text = requests.utils.quote(user_text)
         clean_prompt = requests.utils.quote(prompt)
         
-        # ПОЧИНЕНО: Добавлен правильный слэш перед текстом запроса
-        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=searchgpt"
+        # Починенный, железобетонный адрес текстового ИИ-шлюза
+        API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=openai"
+        headers = {'User-Agent': 'Mozilla/5.0'}
         
-        response = requests.get(API_URL, timeout=12)
+        response = requests.get(API_URL, headers=headers, timeout=15)
         if response.status_code == 200:
             answer = response.text.strip()
         else:
@@ -151,7 +151,6 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     if not answer:
         answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
 
-    # Бурмалда включается ТОЛЬКО если у пользователя активирован режим Меллстроя
     if current_mode == "mellstroy" and "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
     return answer
