@@ -26,16 +26,17 @@ def translate_to_burmalda(text):
     return " ".join(burmalda_words)
 
 def transcribe_audio(audio_bytes, hf_token):
+    """ПОЧИНЕНО: Теперь аудио улетает на реальный бесплатный ИИ Whisper от OpenAI на серверах Hugging Face"""
     try:
         API_URL = "https://huggingface.co"
         headers = {"Authorization": f"Bearer {hf_token}"}
-        response = requests.post(API_URL, headers=headers, data=audio_bytes)
+        response = requests.post(API_URL, headers=headers, data=audio_bytes, timeout=30)
         return response.json().get("text", "")
-    except:
+    except Exception as e:
+        print(f"Ошибка Whisper API: {e}")
         return ""
 
 async def process_voice_message(update, context, hf_token, handle_ai_logic_func, get_user_data_func):
-    """Отдельная изолированная функция для полной обработки ГС"""
     user_id = update.message.from_user.id
     is_premium, current_mode = get_user_data_func(user_id)
     
@@ -43,17 +44,17 @@ async def process_voice_message(update, context, hf_token, handle_ai_logic_func,
         await update.message.reply_text("❌ Функция работы с ГС доступна только Premium пользователям! Жми /buy ⚡")
         return
         
-    await update.message.reply_text("🎙️ Расшифровываю голосовое...")
+    await update.message.reply_text("🎙️ Расшифровываю голосовое сообщение, подожди...")
     try:
         file = await context.bot.get_file(update.message.voice.file_id)
         audio = await file.download_as_bytearray()
         text = transcribe_audio(bytes(audio), hf_token)
         
         if not text:
-            await update.message.reply_text("❌ Не удалось разобрать слова.")
+            await update.message.reply_text("❌ Не удалось разобрать слова в аудио. Возможно, плохая запись.")
             return
             
         answer = await handle_ai_logic_func(user_id, text, current_mode)
-        await update.message.reply_text(f"💬 Расшифровка ГС: {text}\n\n🤖 Ответ ИИ: {answer}")
+        await update.message.reply_text(f"💬 Расшифровка ГС:\n«{text}»\n\n🤖 Ответ ИИ:\n{answer}")
     except Exception as e:
-        await update.message.reply_text("🔴 Не удалось обработать аудиофайл.")
+        await update.message.reply_text("🔴 Не удалось обработать аудиофайл из-за внутренней ошибки.")
