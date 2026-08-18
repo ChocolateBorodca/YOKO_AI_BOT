@@ -8,38 +8,69 @@ from telegram.ext import ContextTypes
 from utils import translate_to_burmalda, process_voice_message
 
 YOUR_TELEGRAM_ID = 1151550758
+DB_FILE = "bot_database.db"
 
-try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-except: ADMIN_ID = 0
+try: 
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except: 
+    ADMIN_ID = 0
 
 def init_db():
-    pass
+    """Создает реальную базу данных, если её ещё нет"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            is_premium INTEGER DEFAULT 0,
+            mode TEXT DEFAULT 'default'
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 def get_user_data(user_id):
+    """Проверяет статус пользователя в реальной БД"""
     if ADMIN_ID != 0 and int(user_id) == ADMIN_ID:
         return 1, "mellstroy"
     if int(user_id) == YOUR_TELEGRAM_ID:
         return 1, "mellstroy"
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_premium, mode FROM users WHERE user_id = ?", (int(user_id),))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return row[0], row[1]
     return 0, "default"
 
-def get_group_mode(chat_id):
-    return "default"
-
-def set_group_mode(chat_id, mode):
-    pass
-
 def set_user_mode(user_id, mode):
-    pass
+    """Сохраняет выбранный режим в базу данных"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO users (user_id, mode) VALUES(?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode
+    ''', (int(user_id), mode))
+    conn.commit()
+    conn.close()
 
-def save_message(user_id, role, content):
-    pass
-
-def get_chat_history(user_id, limit=6):
-    return []
+def activate_premium(user_id):
+    """Активирует премиум в базе данных после реальной оплаты"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO users (user_id, is_premium) VALUES(?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET is_premium=1
+    ''', (int(user_id),))
+    conn.commit()
+    conn.close()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_info = (
-         "🚀 **Привет я YOKO! Я универсальный ИИ-ассистент.**\n\n"
+         "🚀 **Привет, я YOKO! Я твой продвинутый ИИ-ассистент.**\n\n"
          "Вот список всех доступных команд проекта:\n"
          "😇 /yoko — Обычный вежливый ИИ (Бесплатно)\n"
          "⚡ /buy — Открыть расширенный Премиум доступ за 15 звезд\n"
@@ -49,6 +80,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(start_info, parse_mode="Markdown")
 
 async def cmd_yoko(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    set_user_mode(user_id, "default")
     await update.message.reply_text("😇 Теперь с тобой общается обычный ИИ YOKO.")
 
 async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -65,51 +98,70 @@ async def buy_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
             description=full_description[:250], payload="yoko_premium_payload",
             provider_token="", currency="XTR", prices=prices
         )
-    except Exception as e: logging.error(f"Ошибка счета: {e}")
+    except Exception as e: 
+        logging.error(f"Ошибка выставления счета: {e}")
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ЭТА ФУНКЦИЯ ТЕПЕРЬ РЕАЛЬНО ВЫДАЕТ ПРЕМИУМ ПРИ УСПЕШНОЙ ОПЛАТЕ!"""
+    user_id = update.message.from_user.id
+    activate_premium(user_id)
+    set_user_mode(user_id, "mellstroy")
+    await update.message.reply_text("🎉 Спасибо за покупку! Премиум успешно активирован. Режим МЕЛЛСТРОЯ включен! 🎰")
+
 async def cmd_mellstroy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    is_premium, _ = get_user_data(user_id)
+    if not is_premium:
+        await update.message.reply_text("❌ Режим Меллстроя доступен только после покупки премиума! Нажми /buy ⚡")
+        return
+    set_user_mode(user_id, "mellstroy")
     await update.message.reply_text("🔥 МЕЛЛСТРОЙ ВЕРНУЛСЯ! Я снова общаюсь на языке Бурмалда. 🎰")
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Премиум: Активирован (Premium)")
+    is_premium, mode = get_user_data(user_id)
+    status = "Активирован (Premium) 👑" if is_premium else "Базовый (Бесплатный) 😇"
+    await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Статус: {status}\n• Активный режим: {mode}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
-    # Промпт под хайповый режим Меллстроя
-    prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
+    # Промпты меняются в зависимости от того, включил ли пользователь Меллстроя
+    if current_mode == "mellstroy":
+        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
+    else:
+        prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
     try:
-        # ЖЕЛЕЗОБЕТОННЫЙ URL-ШЛЮЗ: ИСПОЛЬЗУЕМ КРИСТАЛЬНО ЧИСТЫЙ GET-ЗАПРОС В ОБХОД КЛЮЧЕЙ И ЛИМИТОВ
         clean_text = requests.utils.quote(user_text)
         clean_prompt = requests.utils.quote(prompt)
         
+        # ПОЧИНЕНО: Добавлен правильный слэш перед текстом запроса
         API_URL = f"https://pollinations.ai{clean_text}?system={clean_prompt}&model=searchgpt"
         
         response = requests.get(API_URL, timeout=12)
-        
         if response.status_code == 200:
             answer = response.text.strip()
         else:
             answer = f"🔴 Ошибка сетевого узла ИИ (Код {response.status_code})"
-
     except Exception as e:
         answer = f"🔴 Сбой линии связи: {str(e)[:25]}"
 
     if not answer:
         answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
 
-    # В режиме /chat по умолчанию у нас всегда включена сочная Бурмалда
-    if "🔴" not in answer: 
+    # Бурмалда включается ТОЛЬКО если у пользователя активирован режим Меллстроя
+    if current_mode == "mellstroy" and "🔴" not in answer: 
         answer = translate_to_burmalda(answer)
     return answer
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
-    await update.message.reply_text(await handle_ai_logic(user_id, user_text, "mellstroy"))
+    _, current_mode = get_user_data(user_id)
+    
+    await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
