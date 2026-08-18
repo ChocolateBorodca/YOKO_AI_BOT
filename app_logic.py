@@ -132,14 +132,14 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
     try:
-        # ЖЕЛЕЗОБЕТОННЫЙ И СТАБИЛЬНЫЙ ОФИЦИАЛЬНЫЙ ДВИЖОК DUCKDUCKGO
+        # СТАБИЛЬНЫЙ ОФИЦИАЛЬНЫЙ ДВИЖОК DUCKDUCKGO
         from duckduckgo_search import DDGS
         
         full_message = f"Инструкция: {prompt}\nПользователь: {user_text}"
         
         with DDGS() as ddgs:
-            # Бесплатная, сверхбыстрая и мощная модель GPT-4o-mini
-            response = ddgs.chat(full_message, model="gpt-4o-mini")
+            # ПОЧИНЕНО: Используем .text вместо устаревшего .chat
+            response = ddgs.text(full_message, model="gpt-4o-mini")
             
         if response:
             answer = response.strip()
