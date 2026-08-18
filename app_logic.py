@@ -138,8 +138,8 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         full_message = f"Инструкция: {prompt}\nПользователь: {user_text}"
         
         with DDGS() as ddgs:
-            # ПОЧИНЕНО: Используем .text вместо устаревшего .chat
-            response = ddgs.text(full_message, model="gpt-4o-mini")
+            # ЖЕЛЕЗОБЕТОННО ПОД ПОСЛЕДНЮЮ ВЕРСИЮ: Передаем через keywords=
+            response = ddgs.text(keywords=full_message, model="gpt-4o-mini")
             
         if response:
             answer = response.strip()
