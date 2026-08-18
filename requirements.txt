@@ -3,3 +3,4 @@ requests
 Pillow
 certifi
 openai
+duckduckgo_search
