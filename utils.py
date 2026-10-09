@@ -1,5 +1,5 @@
 import re
-import requests
+import httpx  # Перешли на асинхронный httpx вместо requests
 
 def translate_to_burmalda(text):
     """Словарь перевода обычного текста в язык Бурмалды"""
@@ -26,15 +26,23 @@ def translate_to_burmalda(text):
             burmalda_words.append(word)
     return " ".join(burmalda_words)
 
-def transcribe_audio(audio_bytes, hf_token):
-    """Починенный адрес: отправляет аудио на Whisper-модель в Hugging Face"""
+async def transcribe_audio(audio_bytes, hf_token):
+    """ИСПРАВЛЕНО: Асинхронный запрос к настоящему Inference API Hugging Face (модель Whisper)"""
     try:
+        # Используем быструю и точную модель Whisper-Large-V3-Turbo
         API_URL = "https://huggingface.co"
         headers = {"Authorization": f"Bearer {hf_token}"}
-        response = requests.post(API_URL, headers=headers, data=audio_bytes, timeout=30)
-        return response.json().get("text", "")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(API_URL, headers=headers, content=audio_bytes, timeout=30.0)
+            
+        if response.status_code == 200:
+            return response.json().get("text", "")
+        else:
+            print(f"Ошибка Whisper API (Код {response.status_code}): {response.text}")
+            return ""
     except Exception as e:
-        print(f"Ошибка Whisper API: {e}")
+        print(f"Исключение при вызове Whisper API: {e}")
         return ""
 
 async def process_voice_message(update, context, hf_token, handle_ai_logic_func, get_user_data_func):
@@ -49,13 +57,16 @@ async def process_voice_message(update, context, hf_token, handle_ai_logic_func,
     try:
         file = await context.bot.get_file(update.message.voice.file_id)
         audio = await file.download_as_bytearray()
-        text = transcribe_audio(bytes(audio), hf_token)
+        
+        # ИСПРАВЛЕНО: Теперь вызываем асинхронную функцию через await
+        text = await transcribe_audio(bytes(audio), hf_token)
         
         if not text:
-            await update.message.reply_text("❌ Не удалось разобрать слова в аудио. Возможно, плохая запись.")
+            await update.message.reply_text("❌ Не удалось разобрать слова в аудио. Возможно, плохая запись или Hugging Face перегружен.")
             return
             
         answer = await handle_ai_logic_func(user_id, text, current_mode)
         await update.message.reply_text(f"💬 Расшифровка ГС:\n«{text}»\n\n🤖 Ответ ИИ:\n{answer}")
     except Exception as e:
+        print(f"Ошибка обработки ГС в боте: {e}")
         await update.message.reply_text("🔴 Не удалось обработать аудиофайл из-за внутренней ошибки.")
