@@ -65,7 +65,7 @@ def get_user_data(user_id):
     
     if row:
         # Извлечение данных из кортежа sqlite напрямую (исправлен баг с двойным row)
-        return row[0], row[1]
+        return row, row
     return 0, "default"
 
 def set_user_mode(user_id, mode):
@@ -153,9 +153,9 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     is_premium, _ = get_user_data(user_id)
 
     if current_mode == "mellstroy":
-        system_prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
+        system_prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, строго в 1-2 предложениях. Не пиши много текста!"
     else:
-        system_prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
+        system_prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и очень коротко, буквально в пару предложений."
 
     # Управление историей сообщений для Премиум пользователей
     if is_premium:
@@ -177,7 +177,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             timeout=15.0
         )
         
-        # ИСПРАВЛЕНО: Универсальная распаковка текстового ответа из OpenRouter
+        # Универсальная распаковка текстового ответа из OpenRouter
         if hasattr(response, 'choices') and response.choices:
             answer = response.choices.message.content.strip()
         elif isinstance(response, str):
@@ -187,6 +187,10 @@ async def handle_ai_logic(user_id, user_text, current_mode):
                 answer = response['choices']['message']['content'].strip()
             except:
                 answer = str(response).strip()
+        
+        # ИСПРАВЛЕНО: Жесткая защита от слишком длинного текста (лимит Telegram — 4096 символов)
+        if len(answer) > 3500:
+            answer = answer[:3500] + "\n\n⚠️ [Текст ответа был слишком длинным и автоматически обрезан]"
         
         # Сохраняем в контекст, если всё успешно
         if is_premium and answer and not answer.startswith("🔴"):
