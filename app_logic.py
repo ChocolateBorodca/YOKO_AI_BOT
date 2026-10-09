@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import logging
-from openai import AsyncOpenAI  # Используем библиотеку openai для работы с OpenRouter
+from openai import AsyncOpenAI  # Библиотека openai для работы с OpenRouter
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
@@ -10,14 +10,21 @@ from utils import translate_to_burmalda, process_voice_message
 
 YOUR_TELEGRAM_ID = 1151550758
 
-# ИСПРАВЛЕНО: База данных теперь будет создаваться в постоянной папке диска Render
+# Настройка постоянного пути для сохранения базы данных на диске Render
 DB_FILE = "/app/data/bot_database.db"
 
-# ИСПРАВЛЕНО: Официальное подключение к OpenRouter вместо Pollinations
-ai_client = AsyncOpenAI(
-    base_url="https://openrouter.ai",
-    api_key=os.getenv("OPENROUTER_KEY")  # Ключ добавим в панель Render
-)
+# Получаем ключ OpenRouter из настроек сервера
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
+
+# Безопасная инициализация клиента OpenRouter
+if OPENROUTER_KEY:
+    ai_client = AsyncOpenAI(
+        base_url="https://openrouter.ai",
+        api_key=OPENROUTER_KEY
+    )
+else:
+    ai_client = None
+    logging.warning("⚠️ Переменная окружения OPENROUTER_KEY не найдена! Ответы ИИ заблокированы.")
 
 try: 
     ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
@@ -29,7 +36,7 @@ CONTEXT_MEMORY = {}
 MAX_CONTEXT_LEN = 10  # Храним последние 5 реплик пользователя и 5 ответов ИИ
 
 def init_db():
-    # ИСПРАВЛЕНО: Автоматически создаем папку для диска, если её еще нет
+    # Автоматически создаем папку для постоянного диска, если её еще нет на сервере
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     
     conn = sqlite3.connect(DB_FILE)
@@ -57,7 +64,7 @@ def get_user_data(user_id):
     conn.close()
     
     if row:
-        # ИСПРАВЛЕНО: возвращаем элементы кортежа (is_premium, mode) отдельно, а не (row, row)
+        # Извлечение данных из кортежа sqlite напрямую
         return row[0], row[1]
     return 0, "default"
 
@@ -139,6 +146,10 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Статус: {status}\n• Активный режим: {mode}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
+    # Если на сервере нет ключа ИИ, не отправляем запрос в никуда
+    if not ai_client:
+        return "🔴 Ответ ИИ временно заблокирован: администратор не настроил OPENROUTER_KEY в панели хостинга."
+
     is_premium, _ = get_user_data(user_id)
 
     if current_mode == "mellstroy":
@@ -146,7 +157,7 @@ async def handle_ai_logic(user_id, user_text, current_mode):
     else:
         system_prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
 
-    # Управление историей сообщений (только для Премиум пользователей)
+    # Управление историей сообщений для Премиум пользователей
     if is_premium:
         if user_id not in CONTEXT_MEMORY:
             CONTEXT_MEMORY[user_id] = []
@@ -159,14 +170,14 @@ async def handle_ai_logic(user_id, user_text, current_mode):
         ]
 
     try:
-        # ИСПРАВЛЕНО: Асинправный стабильный запрос через OpenRouter
-        # Используем отличную бесплатную модель google/gemini-2.5-flash
+        # Асинхронный стабильный запрос через OpenRouter
+        # Модель google/gemini-2.5-flash-ids:free является полностью бесплатной и быстрой
         response = await ai_client.chat.completions.create(
             model="google/gemini-2.5-flash-ids:free",
             messages=messages_payload,
             timeout=15.0
         )
-        answer = response.choices[0].message.content.strip()
+        answer = response.choices.message.content.strip()
         
         if is_premium and answer:
             CONTEXT_MEMORY[user_id].append({"role": "assistant", "content": answer})
@@ -190,5 +201,5 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Вместо HF_TOKEN теперь передаем нашего клиента OpenRouter для асинхронной расшифровки
+    # Передаем ai_client вместо токена Hugging Face для асинхронного распознавания речи
     await process_voice_message(update, context, ai_client, handle_ai_logic, get_user_data)
