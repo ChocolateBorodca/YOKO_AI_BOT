@@ -64,7 +64,7 @@ def get_user_data(user_id):
     conn.close()
     
     if row:
-        # Извлечение данных из кортежа sqlite напрямую (исправлен баг с двойным row)
+        # Извлечение данных из кортежа sqlite напрямую
         return row, row
     return 0, "default"
 
@@ -171,8 +171,9 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
     try:
         # Асинхронный стабильный запрос через OpenRouter
+        # ИСПРАВЛЕНО: Перешли на суперстабильную модель Llama 3.1 от Meta
         response = await ai_client.chat.completions.create(
-            model="google/gemini-2.5-flash-ids:free",
+            model="meta-llama/llama-3.1-8b-instruct:free",
             messages=messages_payload,
             timeout=15.0
         )
@@ -188,7 +189,11 @@ async def handle_ai_logic(user_id, user_text, current_mode):
             except:
                 answer = str(response).strip()
         
-        # ИСПРАВЛЕНО: Жесткая защита от слишком длинного текста (лимит Telegram — 4096 символов)
+        # ИСПРАВЛЕНО: Защита от выдачи HTML-кода сайта при сбоях сети
+        if "<!DOCTYPE" in answer or "<html" in answer:
+            return "🔴 Сервер OpenRouter сейчас перегружен потоком данных. Пожалуйста, повтори команду через 15 секунд!"
+            
+        # Защита от слишком длинного текста (лимит Telegram — 4096 символов)
         if len(answer) > 3500:
             answer = answer[:3500] + "\n\n⚠️ [Текст ответа был слишком длинным и автоматически обрезан]"
         
