@@ -1,21 +1,37 @@
 import os
 import sqlite3
 import logging
-import requests
+from openai import AsyncOpenAI  # Используем библиотеку openai для работы с OpenRouter
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
 
+# Импортируем утилиты из utils.py
 from utils import translate_to_burmalda, process_voice_message
 
 YOUR_TELEGRAM_ID = 1151550758
-DB_FILE = "bot_database.db"
+
+# ИСПРАВЛЕНО: База данных теперь будет создаваться в постоянной папке диска Render
+DB_FILE = "/app/data/bot_database.db"
+
+# ИСПРАВЛЕНО: Официальное подключение к OpenRouter вместо Pollinations
+ai_client = AsyncOpenAI(
+    base_url="https://openrouter.ai",
+    api_key=os.getenv("OPENROUTER_KEY")  # Ключ добавим в панель Render
+)
 
 try: 
     ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except: 
     ADMIN_ID = 0
 
+# Словарь для хранения истории сообщений в памяти (для Премиум пользователей)
+CONTEXT_MEMORY = {}
+MAX_CONTEXT_LEN = 10  # Храним последние 5 реплик пользователя и 5 ответов ИИ
+
 def init_db():
+    # ИСПРАВЛЕНО: Автоматически создаем папку для диска, если её еще нет
+    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+    
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -41,7 +57,8 @@ def get_user_data(user_id):
     conn.close()
     
     if row:
-        return row, row
+        # ИСПРАВЛЕНО: возвращаем элементы кортежа (is_premium, mode) отдельно, а не (row, row)
+        return row[0], row[1]
     return 0, "default"
 
 def set_user_mode(user_id, mode):
@@ -122,38 +139,42 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📋 ТВОЙ ПРОФИЛЬ:\n• ID: {user_id}\n• Статус: {status}\n• Активный режим: {mode}")
 
 async def handle_ai_logic(user_id, user_text, current_mode):
+    is_premium, _ = get_user_data(user_id)
+
     if current_mode == "mellstroy":
-        prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
+        system_prompt = "Ты — Меллстрой, хайповый стример. Говори дерзко, используй сленг: боров, легенда, хайп, суета, крутим слоты. Отвечай кратко, в 1-2 предложениях."
     else:
-        prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
+        system_prompt = "Ты — вежливый и полезный ИИ ассистент по имени YOKO. Отвечай дружелюбно, грамотно и коротко."
+
+    # Управление историей сообщений (только для Премиум пользователей)
+    if is_premium:
+        if user_id not in CONTEXT_MEMORY:
+            CONTEXT_MEMORY[user_id] = []
+        CONTEXT_MEMORY[user_id].append({"role": "user", "content": user_text})
+        messages_payload = [{"role": "system", "content": system_prompt}] + CONTEXT_MEMORY[user_id]
+    else:
+        messages_payload = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text}
+        ]
 
     try:
-        # СТАБИЛЬНЫЙ РАБОЧИЙ ШЛЮЗ БЕЗ КЛЮЧЕЙ И БЕЗ БЛОКИРОВОК
-        # Отправляем структурированный запрос через открытый эндпоинт
-        url = "https://pollinations.ai"
-        payload = {
-            "messages": [
-                {"role": "user", "content": f"{prompt}\n\nОтветь на сообщение пользователя: {user_text}"}
-            ],
-            "model": "searchgpt",
-            "code": "true"
-        }
+        # ИСПРАВЛЕНО: Асинправный стабильный запрос через OpenRouter
+        # Используем отличную бесплатную модель google/gemini-2.5-flash
+        response = await ai_client.chat.completions.create(
+            model="google/gemini-2.5-flash-ids:free",
+            messages=messages_payload,
+            timeout=15.0
+        )
+        answer = response.choices[0].message.content.strip()
         
-        # Передаем обычные заголовки браузера, чтобы пройти проверки
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        response = requests.post(url, json=payload, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            answer = response.text.strip()
-        else:
-            answer = f"🔴 Ошибка сетевого узла ИИ (Код {response.status_code})"
-            
+        if is_premium and answer:
+            CONTEXT_MEMORY[user_id].append({"role": "assistant", "content": answer})
+            if len(CONTEXT_MEMORY[user_id]) > MAX_CONTEXT_LEN:
+                CONTEXT_MEMORY[user_id] = CONTEXT_MEMORY[user_id][-MAX_CONTEXT_LEN:]
+                
     except Exception as e:
-        answer = f"🔴 Сбой линии связи: {str(e)[:40]}"
+        answer = f"🔴 Сбой линии связи ИИ: {str(e)[:50]}"
 
     if not answer:
         answer = "ИИ-сервер обрабатывает поток данных, повтори запрос!"
@@ -169,4 +190,5 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_voice_message(update, context, os.getenv("HF_TOKEN"), handle_ai_logic, get_user_data)
+    # Вместо HF_TOKEN теперь передаем нашего клиента OpenRouter для асинхронной расшифровки
+    await process_voice_message(update, context, ai_client, handle_ai_logic, get_user_data)
