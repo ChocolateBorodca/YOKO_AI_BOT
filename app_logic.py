@@ -64,7 +64,7 @@ def get_user_data(user_id):
     conn.close()
     
     if row:
-        # Извлечение данных из кортежа sqlite напрямую
+        # Извлечение данных из кортежа sqlite напрямую (исправлен баг с двойным row)
         return row[0], row[1]
     return 0, "default"
 
@@ -171,15 +171,25 @@ async def handle_ai_logic(user_id, user_text, current_mode):
 
     try:
         # Асинхронный стабильный запрос через OpenRouter
-        # Модель google/gemini-2.5-flash-ids:free является полностью бесплатной и быстрой
         response = await ai_client.chat.completions.create(
             model="google/gemini-2.5-flash-ids:free",
             messages=messages_payload,
             timeout=15.0
         )
-        answer = response.choices.message.content.strip()
         
-        if is_premium and answer:
+        # ИСПРАВЛЕНО: Универсальная распаковка текстового ответа из OpenRouter
+        if hasattr(response, 'choices') and response.choices:
+            answer = response.choices.message.content.strip()
+        elif isinstance(response, str):
+            answer = response.strip()
+        else:
+            try:
+                answer = response['choices']['message']['content'].strip()
+            except:
+                answer = str(response).strip()
+        
+        # Сохраняем в контекст, если всё успешно
+        if is_premium and answer and not answer.startswith("🔴"):
             CONTEXT_MEMORY[user_id].append({"role": "assistant", "content": answer})
             if len(CONTEXT_MEMORY[user_id]) > MAX_CONTEXT_LEN:
                 CONTEXT_MEMORY[user_id] = CONTEXT_MEMORY[user_id][-MAX_CONTEXT_LEN:]
@@ -201,5 +211,5 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(await handle_ai_logic(user_id, user_text, current_mode))
 
 async def handle_voice_gateway(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Передаем ai_client вместо токена Hugging Face для асинхронного распознавания речи
+    # Передаем ai_client вместо токена Hugging Face
     await process_voice_message(update, context, ai_client, handle_ai_logic, get_user_data)
